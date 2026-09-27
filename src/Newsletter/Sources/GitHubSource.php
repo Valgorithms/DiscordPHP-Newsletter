@@ -290,16 +290,12 @@ final class GitHubSource implements Source
         $requests = [];
         foreach (array_slice($lookups, 0, self::MAX_ENRICH_REQUESTS, true) as $url => $targets) {
             $requests[] = $this->http->get($url, $this->headers())->then(
-                function (array $body) use (&$events, $targets): void {
+                function (array $body) use (&$events, $targets, $window): void {
                     foreach ($targets as [$i, $kind]) {
                         if ($kind === 'push') {
-                            $commits = array_map(static fn(array $c) => [
-                                'sha' => (string) ($c['sha'] ?? ''),
-                                'message' => (string) ($c['commit']['message'] ?? ''),
-                                'distinct' => true,
-                            ], (array) ($body['commits'] ?? []));
+                            $commits = $this->ownCommits($window, (array) ($body['commits'] ?? []));
                             $events[$i]['payload']['commits'] = $commits;
-                            $events[$i]['payload']['size'] = (int) ($body['total_commits'] ?? count($commits));
+                            $events[$i]['payload']['size'] = count($commits);
                         } else {
                             $existing = (array) ($events[$i]['payload'][$kind] ?? []);
                             $events[$i]['payload'][$kind] = $existing + array_intersect_key($body, array_flip(['number', 'title', 'merged', 'state', 'pull_request']));
@@ -314,6 +310,33 @@ final class GitHubSource implements Source
         return all($requests)->then(function () use (&$events): array {
             return $events;
         });
+    }
+
+    /**
+     * The commits of a compared push that are really the owner's work from this
+     * window. A push that merged `master` into a branch compares across every
+     * upstream commit it pulled in (hundreds, by other people, from other days):
+     * those, and merge commits themselves, are dropped.
+     *
+     * @param list<array<string, mixed>> $commits Raw compare-API commits.
+     *
+     * @return list<array{sha: string, message: string, distinct: bool}>
+     */
+    private function ownCommits(Window $window, array $commits): array
+    {
+        $own = [];
+        foreach ($commits as $c) {
+            $login = (string) ($c['author']['login'] ?? '');
+            $date = $c['commit']['author']['date'] ?? null;
+            if (strcasecmp($login, $this->username) !== 0
+                || count((array) ($c['parents'] ?? [])) > 1
+                || ! is_string($date) || ! $window->contains(new \DateTimeImmutable($date))) {
+                continue;
+            }
+            $own[] = ['sha' => (string) ($c['sha'] ?? ''), 'message' => (string) ($c['commit']['message'] ?? ''), 'distinct' => true];
+        }
+
+        return $own;
     }
 
     /**

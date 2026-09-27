@@ -102,6 +102,7 @@ final class Writer
     public function notes(SourceReport $report): PromiseInterface
     {
         $facts = $report->toPromptText();
+        $this->logger->info("Asking the model for {$report->source} notes…");
 
         return $this->llm->chat([
             ['role' => 'system', 'content' => 'You are the research assistant for a personal daily newsletter. You turn raw activity logs into accurate editorial notes. You never invent facts.'],
@@ -148,6 +149,7 @@ final class Writer
         ));
         $body = implode("\n\n", array_map(static fn($source, $text) => "## Notes: {$source}\n{$text}", array_keys($notes), $notes));
 
+        $this->logger->info('Asking the model to write the newsletter…');
         $messages = [
             ['role' => 'system', 'content' => $this->systemPrompt()],
             ['role' => 'user', 'content' => <<<PROMPT
@@ -182,6 +184,7 @@ final class Writer
     {
         $current = json_encode($draft->toArray(), JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         $facts = implode("\n\n", array_map(static fn($source, $text) => "## {$source}\n{$text}", array_keys($notes), $notes));
+        $this->logger->info('Asking the model to fact-check the draft…');
 
         return $this->draftFrom([
             ['role' => 'system', 'content' => 'You are a careful fact-checking editor. You only change what is wrong.'],

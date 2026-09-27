@@ -97,9 +97,13 @@ final class GitHubSourceTest extends TestCase
         $http = self::fakeHttp([
             '/pulls/1414' => ['number' => 1414, 'title' => 'Normalize options', 'merged' => false],
             '/pulls/1495' => ['number' => 1495, 'title' => 'Register the scheduled event exception handlers', 'merged' => false],
-            '/compare/aaa1111...bbb2222' => ['total_commits' => 2, 'commits' => [
-                ['sha' => 'd1', 'commit' => ['message' => "Teach the planner to mine\n\nbody"]],
-                ['sha' => 'd2', 'commit' => ['message' => 'Fix the relay']],
+            // A branch that had master merged in: other people's and older commits, plus the merge itself.
+            '/compare/aaa1111...bbb2222' => ['total_commits' => 5, 'commits' => [
+                ['sha' => 'u1', 'author' => ['login' => 'someone-else'], 'parents' => [[]], 'commit' => ['message' => 'Upstream work', 'author' => ['date' => '2026-09-27T10:00:00Z']]],
+                ['sha' => 'o1', 'author' => ['login' => 'ValZarGaming'], 'parents' => [[]], 'commit' => ['message' => 'Last week', 'author' => ['date' => '2026-09-20T10:00:00Z']]],
+                ['sha' => 'm1', 'author' => ['login' => 'valzargaming'], 'parents' => [[], []], 'commit' => ['message' => "Merge branch 'master'", 'author' => ['date' => '2026-09-27T13:00:00Z']]],
+                ['sha' => 'd1', 'author' => ['login' => 'valzargaming'], 'parents' => [[]], 'commit' => ['message' => "Teach the planner to mine\n\nbody", 'author' => ['date' => '2026-09-27T13:10:00Z']]],
+                ['sha' => 'd2', 'author' => ['login' => 'valzargaming'], 'parents' => [[]], 'commit' => ['message' => 'Fix the relay', 'author' => ['date' => '2026-09-27T13:20:00Z']]],
             ]],
             '/events' => $events,
             '/search/commits' => ['items' => []],
