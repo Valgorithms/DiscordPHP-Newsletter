@@ -31,6 +31,7 @@ use Newsletter\Sources\SourceReport;
 use Newsletter\StateStore;
 use Newsletter\Window;
 use React\EventLoop\Loop;
+use React\Promise\PromiseInterface;
 
 require __DIR__ . '/vendor/autoload.php';
 
@@ -45,10 +46,20 @@ $sources = Services::webSources($loop, $state, $logger);
 $sources[] = new DiscordSource(new DiscordActivityLog(__DIR__ . '/var/discord-activity.jsonl'));
 
 $window = Window::since(null, new DateTimeImmutable('now', Services::timezone()));
-$writer = Services::writer(Services::ollama($loop), $logger);
+$ollama = Services::ollama($loop);
+$writer = Services::writer($ollama, $logger);
 $pipeline = new Newsletter\Pipeline($sources, $writer, $state, $logger);
 
-$pipeline->collect($window)
+// Without the model a preview only shows the template, so say why and stop.
+Services::checkOllama($ollama, $logger)
+    ->then(function (?string $problem) use ($pipeline, $window): PromiseInterface {
+        if ($problem !== null) {
+            fwrite(STDERR, "\nCannot preview: {$problem}\n");
+            exit(1);
+        }
+
+        return $pipeline->collect($window);
+    })
     ->then(function (array $reports) use ($writer, $window, $showFacts) {
         if ($showFacts) {
             echo implode("\n\n", array_map(static fn(SourceReport $r) => $r->toPromptText(), $reports)), "\n\n";
@@ -61,6 +72,9 @@ $pipeline->collect($window)
             foreach ($written['notes'] as $source => $notes) {
                 echo "--- notes: {$source} ---\n{$notes}\n\n";
             }
+        }
+        if ($written['fallback'] !== null) {
+            fwrite(STDERR, "\nThe model could not write the newsletter, so this is the template instead.\nReason: {$written['fallback']}\n\n");
         }
         echo "===================== DRAFT =====================\n\n", $written['draft']->toMarkdown(), "\n";
     }, function (Throwable $e): void {

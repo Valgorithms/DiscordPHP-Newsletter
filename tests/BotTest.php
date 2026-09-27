@@ -85,4 +85,20 @@ final class BotTest extends TestCase
         $this->assertSame('2026-09-27', $reloaded->editionByDmMessage('111')['key']);
         $this->assertNull($reloaded->editionByDmMessage('222'));
     }
+
+    public function testApprovalMessageWarnsWhenTheModelDidNotWriteTheDraft(): void
+    {
+        $window = new Window(new \DateTimeImmutable('2026-09-27T00:00:00Z'), new \DateTimeImmutable('2026-09-27T23:30:00Z'));
+        $edition = [
+            'key' => '2026-09-27', 'revision' => 1, 'history' => [], 'reports' => [],
+            'fallback' => 'the model returned an empty reply',
+            'draft' => ['headline' => 'H', 'intro' => 'I', 'sections' => [], 'signoff' => ''],
+        ];
+
+        $json = json_encode(Renderer::approval($edition, $window), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+
+        $this->assertStringContainsString("couldn't write this one", $json);
+        $this->assertStringContainsString('the model returned an empty reply', $json);
+        $this->assertStringContainsString('!rewrite', $json);
+    }
 }

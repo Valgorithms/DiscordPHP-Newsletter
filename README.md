@@ -18,7 +18,7 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
    per-server message/join counts       │   Discord activity log + your audit-log actions     │
    → var/discord-activity.jsonl         │   Steam   playtime delta + achievements unlocked    │
  hourly Steam playtime snapshot         │ write (local Ollama, one call at a time)            │
-   → var/state.json                     │   notes per source → compose JSON → fact-check      │
+   → var/state.json                     │   notes per source → prose draft → fact-check       │
                                         │ DM the draft to you  ──►  ✅ Approve & post         │
                                         │                           ✏️ Request edits (modal)  │
                                         │                           🗑️ Skip                    │
@@ -33,7 +33,13 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
   `approve` or press the button.
 - **Buttons survive restarts.** State lives in `var/state.json`, and button ids carry the edition and revision, so an old
   revision's buttons can't post an outdated draft.
-- **If Ollama is down**, you still get a plain template draft built from the facts, so a day is never lost.
+- **Plain-English prose, not a changelog.** The model first turns each source's raw activity into themes ("reviewed
+  community PRs on command handling"), then writes a few paragraphs about what the day's work was about and why it
+  mattered. It names at most a couple of highlights, never every PR or commit. It writes Markdown rather than JSON,
+  which local models handle far more reliably.
+- **If Ollama is down**, you still get the raw activity list so a day is never lost. The DM says the model didn't
+  write it and why, and `!rewrite` asks the model again once it's back. `bot.php` and `preview.php` check at startup
+  that Ollama answers and has your model, and say exactly what to fix if not.
 - **Catch-up.** If the bot was offline at the scheduled time, it drafts the missed edition on startup. Each window starts
   where the previous one ended.
 
@@ -43,7 +49,8 @@ Set `PUBLISH_TARGETS` (`owner/repo[@branch]:path.json`, comma-separated) and a t
 contents. The push to each site's `main` rebuilds and deploys it. If a site fails (an expired token, say), the Discord
 post stands, the DM says which site failed, and `!publish` retries.
 
-DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!publish [date]` re-publishes a posted edition to the websites, and `!help`.
+DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!rewrite [date]` has the model write the waiting draft again from the same activity, `!publish [date]` re-publishes a
+posted edition to the websites, and `!help`.
 
 ## Setup
 
@@ -79,7 +86,7 @@ php bot.php
 | Path | What it does |
 | --- | --- |
 | `src/Newsletter/Sources/` | `GitHubSource`, `SteamSource` (+ `SteamSnapshots`), `DiscordSource` (+ `DiscordActivityLog`); each returns a `SourceReport` of plain fact lines |
-| `src/Newsletter/Writer.php` | The LLM chain: per-source notes → compose `Draft` JSON (schema-constrained) → fact-check → revise on request, with a template fallback |
+| `src/Newsletter/Writer.php` | The LLM chain: per-source themes → Markdown prose draft → fact-check → revise on request, with a template fallback that says why |
 | `src/Newsletter/ReplyInterpreter.php` | Approve / skip / edit classification of free-text DM replies |
 | `src/Newsletter/Pipeline.php` | Collect → write → store an edition |
 | `src/Newsletter/SitePublisher.php` | Commits approved editions to each website's `newsletter.json` (GitHub contents API) |

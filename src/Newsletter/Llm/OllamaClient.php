@@ -90,6 +90,7 @@ final class OllamaClient
         $openai = $this->openai;
 
         return ($this->transport)('POST', $url, ['Content-Type' => 'application/json'], $payload)
+            ->then(null, fn(\Throwable $e) => throw $this->unreachable($e))
             ->then(static function (string $raw) use ($openai): string {
                 $decoded = json_decode($raw, true);
 
@@ -105,12 +106,74 @@ final class OllamaClient
                     ? ($decoded['choices'][0]['message']['content'] ?? null)
                     : ($decoded['message']['content'] ?? null);
 
-                if (! is_string($content) || $content === '') {
-                    throw new \RuntimeException('LLM response carried no message content');
+                if (! is_string($content) || trim($content) === '') {
+                    $reasoning = $openai
+                        ? ($decoded['choices'][0]['message']['reasoning'] ?? $decoded['choices'][0]['message']['reasoning_content'] ?? null)
+                        : ($decoded['message']['thinking'] ?? null);
+
+                    throw new \RuntimeException(is_string($reasoning) && trim($reasoning) !== ''
+                        ? 'the model put its whole reply in its reasoning and returned no answer; set OLLAMA_THINK=0 (or use a non-thinking model)'
+                        : 'the model returned an empty reply');
                 }
 
                 return $content;
             });
+    }
+
+    /**
+     * The model names the server has installed, e.g. `['gemma3:27b']`. Used at
+     * startup to say clearly when the server is down or the model is missing.
+     *
+     * @return PromiseInterface<list<string>>
+     */
+    public function models(): PromiseInterface
+    {
+        $url = rtrim($this->baseUrl, '/') . ($this->openai ? '/models' : '/api/tags');
+
+        return ($this->transport)('GET', $url, [], '')
+            ->then(null, fn(\Throwable $e) => throw $this->unreachable($e))
+            ->then(function (string $raw): array {
+                $decoded = json_decode($raw, true);
+                if (! is_array($decoded)) {
+                    throw new \RuntimeException("{$this->baseUrl} answered, but not like an Ollama server");
+                }
+                $list = $this->openai ? (array) ($decoded['data'] ?? []) : (array) ($decoded['models'] ?? []);
+
+                return array_values(array_filter(array_map(static fn($m) => is_array($m) ? (string) ($m['id'] ?? $m['name'] ?? '') : '', $list)));
+            });
+    }
+
+    /**
+     * Whether the configured model is among `$installed`. Ollama treats a tag-less
+     * name as `:latest`, so `gemma3` matches `gemma3:latest`.
+     *
+     * @param list<string> $installed
+     */
+    public function hasModel(array $installed): bool
+    {
+        $wanted = str_contains($this->model, ':') ? $this->model : "{$this->model}:latest";
+
+        return in_array($this->model, $installed, true) || in_array($wanted, $installed, true);
+    }
+
+    public function describe(): string
+    {
+        return "{$this->model} at {$this->baseUrl}";
+    }
+
+    /** A transport failure, reworded so it says what to check. */
+    private function unreachable(\Throwable $e): \RuntimeException
+    {
+        $reason = $e->getMessage();
+        if (preg_match('/refused|ECONNREFUSED|Connection to .* failed|getaddrinfo|could not resolve|timed out|timeout/i', $reason)) {
+            $hint = stripos($reason, 'time') !== false
+                ? 'the model did not answer in time (raise OLLAMA_TIMEOUT, or use a smaller model)'
+                : 'nothing is listening there. Is Ollama running (`ollama serve`), and is OLLAMA_URL right?';
+
+            return new \RuntimeException("Could not reach Ollama at {$this->baseUrl}: {$hint}", 0, $e);
+        }
+
+        return new \RuntimeException($reason, 0, $e);
     }
 
     /**

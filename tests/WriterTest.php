@@ -108,4 +108,23 @@ final class WriterTest extends TestCase
         $this->expectException(\InvalidArgumentException::class);
         self::settle($writer->revise(Draft::fromLlmJson(self::DRAFT), 'x', []));
     }
+
+    public function testWritesProseFromMarkdownAndSaysWhenItFellBack(): void
+    {
+        $prose = "# Polls land in DiscordPHP\nI merged the polls work today.\n\n— Cheers";
+        $writer = new Writer($this->fakeLlm(['notes', $prose]), 'Valithor', factCheck: false);
+
+        $written = self::settle($writer->write($this->window(), $this->reports()));
+
+        $this->assertNull($written['fallback']);
+        $this->assertSame('I merged the polls work today.', $written['draft']->intro);
+        $this->assertStringContainsString('Reply with only the newsletter', $this->prompts[1]);
+
+        $failing = new Writer($this->fakeLlm(['notes', new \RuntimeException('LLM server error: model requires more system memory'), 'x']), 'Valithor');
+        $this->prompts = [];
+        $fellBack = self::settle($failing->write($this->window(), $this->reports()));
+
+        $this->assertSame('LLM server error: model requires more system memory', $fellBack['fallback']);
+        $this->assertStringStartsWith("Valithor's daily recap", $fellBack['draft']->headline);
+    }
 }

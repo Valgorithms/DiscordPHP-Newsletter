@@ -63,6 +63,10 @@ final class Renderer
 
         $header = "📰 **Newsletter draft for {$window->label()}** · revision {$revision}\n"
             . 'Reply to this message with any edits you want (in plain words), or use the buttons.';
+        if (! empty($edition['fallback'])) {
+            $header .= "\n⚠️ **Your local model couldn't write this one**, so this is the raw activity list, not the newsletter. Reason: "
+                . mb_substr((string) $edition['fallback'], 0, 200) . "\nSend `!rewrite` to have the model try again from the same activity.";
+        }
         if ($sites) {
             $header .= "\n-# Approving also publishes it to " . implode(', ', $sites) . '.';
         }

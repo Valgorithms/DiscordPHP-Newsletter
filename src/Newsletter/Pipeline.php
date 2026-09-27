@@ -27,8 +27,9 @@ use function React\Promise\all;
  *
  * An edition is a plain array persisted in the {@see StateStore}:
  * `key`, `window`, `status`, `revision`, `draft`, `notes` (the facts revisions
- * are checked against), `reports`, `history` (requested edits), `dm_message_ids`,
- * `posted_message_id`, `created_at`, `manual`.
+ * are checked against), `reports`, `fallback` (why the model could not write
+ * it, when the draft is the template), `history` (requested edits),
+ * `dm_message_ids`, `posted_message_id`, `created_at`, `manual`.
  *
  * @since 1.0.0
  */
@@ -84,6 +85,7 @@ final class Pipeline
                         'draft' => $written['draft']->toArray(),
                         'notes' => $written['notes'],
                         'reports' => array_map(static fn(SourceReport $r) => $r->toArray(), $reports),
+                        'fallback' => $written['fallback'] ?? null,
                         'history' => [],
                         'dm_message_ids' => [],
                         'posted_message_id' => null,

@@ -17,9 +17,9 @@ namespace Newsletter;
  * One newsletter, as structured text: a headline, an intro, titled sections
  * and a sign-off.
  *
- * The LLM writes and revises this as JSON ({@see SCHEMA}); keeping it
- * structured (rather than one markdown blob) lets the renderer respect
- * Discord's size limits and lets a revision touch only what it must.
+ * The local model writes and revises it as plain Markdown ({@see fromMarkdown()}),
+ * which small models handle far more reliably than a JSON schema. Keeping it
+ * structured once parsed lets the renderer respect Discord's size limits.
  *
  * @since 1.0.0
  */
@@ -28,28 +28,6 @@ final class Draft
     public const MAX_SECTIONS = 8;
     public const MAX_HEADLINE = 120;
     public const MAX_SECTION_BODY = 1500;
-
-    /** JSON schema handed to Ollama's structured-output `format`. */
-    public const SCHEMA = [
-        'type' => 'object',
-        'properties' => [
-            'headline' => ['type' => 'string'],
-            'intro' => ['type' => 'string'],
-            'sections' => [
-                'type' => 'array',
-                'items' => [
-                    'type' => 'object',
-                    'properties' => [
-                        'title' => ['type' => 'string'],
-                        'body' => ['type' => 'string'],
-                    ],
-                    'required' => ['title', 'body'],
-                ],
-            ],
-            'signoff' => ['type' => 'string'],
-        ],
-        'required' => ['headline', 'intro', 'sections', 'signoff'],
-    ];
 
     /**
      * @param list<array{title: string, body: string}> $sections
@@ -60,6 +38,96 @@ final class Draft
         public readonly array $sections,
         public readonly string $signoff = '',
     ) {}
+
+    /**
+     * Parses a model reply written as Markdown (or, tolerated, as a JSON draft).
+     *
+     * @throws \InvalidArgumentException When no usable draft can be found.
+     */
+    public static function fromLlmText(string $reply): self
+    {
+        $trimmed = trim((string) preg_replace('/^```(?:json)\s*|\s*```$/i', '', trim($reply)));
+        if (str_starts_with($trimmed, '{')) {
+            return self::fromLlmJson($trimmed);
+        }
+
+        return self::fromMarkdown($reply);
+    }
+
+    /**
+     * Parses the newsletter Markdown the writer asks for:
+     *
+     *     # Headline
+     *     Opening paragraph(s).
+     *     ## Optional section title
+     *     Paragraph(s).
+     *     — Sign-off
+     *
+     * Chatter before the headline ("Sure, here it is:") and code fences are
+     * dropped. Without a `#` headline, the first line becomes the headline.
+     *
+     * @throws \InvalidArgumentException When there is no headline or no body.
+     */
+    public static function fromMarkdown(string $text): self
+    {
+        $text = str_replace("\r\n", "\n", trim($text));
+        $text = trim((string) preg_replace('/^```\w*\n|\n```$/', '', $text));
+        $lines = explode("\n", $text);
+
+        // The headline: the first "# " line, or else the first non-empty line.
+        $headline = '';
+        foreach ($lines as $i => $line) {
+            if (preg_match('/^#\s+(.+)$/', trim($line), $m)) {
+                $headline = $m[1];
+                $lines = array_slice($lines, $i + 1);
+                break;
+            }
+        }
+        if ($headline === '') {
+            while ($lines && trim($lines[0]) === '') {
+                array_shift($lines);
+            }
+            $headline = trim((string) preg_replace('/^[#*\s]+|[*\s]+$/', '', (string) array_shift($lines)));
+        }
+
+        // The sign-off: a last line starting with a dash, e.g. "— See you tomorrow".
+        $signoff = '';
+        while ($lines && in_array(trim((string) end($lines)), ['', '---', '***'], true)) {
+            array_pop($lines);
+        }
+        if ($lines && preg_match('/^\s*(?:—|–|--)\s*(.+)$/u', (string) end($lines), $m)) {
+            $signoff = $m[1];
+            array_pop($lines);
+        }
+
+        $intro = [];
+        $sections = [];
+        $current = null;
+        foreach ($lines as $line) {
+            if (preg_match('/^#{2,4}\s+(.+)$/', trim($line), $m)) {
+                if ($current !== null) {
+                    $sections[] = $current;
+                }
+                $current = ['title' => trim($m[1], " *"), 'body' => ''];
+            } elseif (trim($line) === '---') {
+                continue;
+            } elseif ($current !== null) {
+                $current['body'] .= $line . "\n";
+            } else {
+                $intro[] = $line;
+            }
+        }
+        if ($current !== null) {
+            $sections[] = $current;
+        }
+
+        return self::fromArray([
+            'headline' => $headline,
+            'intro' => implode("\n", $intro),
+            'sections' => $sections,
+            'signoff' => $signoff,
+        ]);
+    }
 
     /**
      * Parses a model reply. Tolerates code fences and chatter around the JSON
@@ -128,7 +196,10 @@ final class Draft
         return ['headline' => $this->headline, 'intro' => $this->intro, 'sections' => $this->sections, 'signoff' => $this->signoff];
     }
 
-    /** Discord-flavoured markdown, used for previews and as prompt context. */
+    /**
+     * Discord-flavoured markdown, in the same shape {@see fromMarkdown()} reads:
+     * used for previews and to hand a draft back to the model for revision.
+     */
     public function toMarkdown(): string
     {
         $parts = ["# {$this->headline}"];
@@ -139,7 +210,7 @@ final class Draft
             $parts[] = ($section['title'] !== '' ? "## {$section['title']}\n" : '') . $section['body'];
         }
         if ($this->signoff !== '') {
-            $parts[] = $this->signoff;
+            $parts[] = "— {$this->signoff}";
         }
 
         return implode("\n\n", $parts);

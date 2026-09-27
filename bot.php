@@ -69,6 +69,7 @@ $state = new StateStore(__DIR__ . '/var/state.json');
 $activityLog = new DiscordActivityLog(__DIR__ . '/var/discord-activity.jsonl');
 $ollama = Services::ollama($discord->getLoop());
 $writer = Services::writer($ollama, $logger);
+Services::checkOllama($ollama, $logger);
 
 $recorder = new ActivityRecorder(
     $discord,

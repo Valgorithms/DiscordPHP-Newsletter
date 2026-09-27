@@ -26,6 +26,7 @@ use Newsletter\Draft;
 use Newsletter\Pipeline;
 use Newsletter\ReplyInterpreter;
 use Newsletter\SitePublisher;
+use Newsletter\Sources\SourceReport;
 use Newsletter\StateStore;
 use Newsletter\Window;
 use Newsletter\Writer;
@@ -179,6 +180,37 @@ final class ApprovalFlow
         }, [StateStore::STATUS_PENDING]);
     }
 
+    /**
+     * Writes a pending edition again from its stored activity, as a new
+     * revision: for a draft the model failed on, or one to start over.
+     *
+     * @return PromiseInterface<array<string, mixed>>
+     */
+    public function rewrite(string $key): PromiseInterface
+    {
+        return $this->exclusive($key, function (array $edition): PromiseInterface {
+            $edition['status'] = StateStore::STATUS_REVISING;
+            $this->state->putEdition($edition);
+            $this->dm("✍️ Rewriting the {$edition['key']} draft from scratch… (the local model can take a few minutes)");
+            $reports = array_map(static fn(array $r) => SourceReport::fromArray($r), (array) ($edition['reports'] ?? []));
+
+            return $this->writer->write($this->window($edition), $reports)->then(function (array $written) use ($edition): PromiseInterface {
+                $edition['draft'] = $written['draft']->toArray();
+                $edition['notes'] = $written['notes'];
+                $edition['fallback'] = $written['fallback'];
+                $edition['revision']++;
+                $this->state->putEdition($edition);
+
+                return $this->sendForApproval($edition);
+            }, function (\Throwable $e) use ($edition): PromiseInterface {
+                $edition['status'] = StateStore::STATUS_PENDING;
+                $this->state->putEdition($edition);
+
+                return reject($e);
+            });
+        });
+    }
+
     // --- gateway handlers ---------------------------------------------------------
 
     private function onInteraction(Interaction $interaction): void
@@ -285,6 +317,17 @@ final class ApprovalFlow
                     ->then(null, fn(\Throwable $e) => $this->fail('generate', $e));
                 break;
 
+            case 'rewrite':
+                // Have the model write the pending draft again from the same activity (no re-collection).
+                $pending = $this->state->pendingEditions();
+                $target = $argument !== '' ? $this->state->edition($argument) : ($pending[0] ?? null);
+                if ($target === null) {
+                    $message->reply('No draft is waiting on you to rewrite.');
+                } else {
+                    $this->rewrite($target['key'])->then(null, fn(\Throwable $e) => $this->fail('rewrite', $e));
+                }
+                break;
+
             case 'publish':
                 // Re-publish a posted edition to the websites, e.g. after fixing a token.
                 $key = $argument;
@@ -314,6 +357,7 @@ final class ApprovalFlow
                     'Reply to a draft in plain words to request edits, or say `approve` / `skip`.',
                     '`!generate`: draft a newsletter for today so far',
                     '`!status`: list drafts waiting on you',
+                    '`!rewrite [date]`: have the model write the waiting draft again from scratch',
                     '`!publish [date]`: publish a posted edition to the websites again (the latest if no date)',
                 ]));
         }

@@ -20,6 +20,7 @@ use Newsletter\Sources\SteamSnapshots;
 use Newsletter\Sources\SteamSource;
 use Psr\Log\LoggerInterface;
 use React\EventLoop\LoopInterface;
+use React\Promise\PromiseInterface;
 
 /**
  * Builds the environment-configured services shared by `bot.php` and
@@ -52,6 +53,35 @@ final class Services
         );
     }
 
+    /**
+     * Checks that Ollama answers and has the configured model, logging what to
+     * fix if not. Resolves with null when ready, or the problem as a sentence.
+     *
+     * @return PromiseInterface<?string>
+     */
+    public static function checkOllama(OllamaClient $ollama, LoggerInterface $logger): PromiseInterface
+    {
+        return $ollama->models()->then(
+            static function (array $installed) use ($ollama, $logger): ?string {
+                if ($ollama->hasModel($installed)) {
+                    $logger->info("Ollama is ready: {$ollama->describe()}");
+
+                    return null;
+                }
+                $problem = "Ollama is running, but the model in OLLAMA_MODEL is not installed ({$ollama->describe()}). "
+                    . 'Installed: ' . ($installed ? implode(', ', $installed) : 'none') . '. Run `ollama pull <model>` or fix OLLAMA_MODEL.';
+                $logger->error($problem);
+
+                return $problem;
+            },
+            static function (\Throwable $e) use ($logger): string {
+                $logger->error("{$e->getMessage()} Until it is, drafts will be the raw activity list.");
+
+                return $e->getMessage();
+            },
+        );
+    }
+
     public static function writer(OllamaClient $ollama, LoggerInterface $logger): Writer
     {
         return new Writer(
@@ -59,7 +89,7 @@ final class Services
             Env::string('NEWSLETTER_AUTHOR') ?? 'Valithor',
             Env::string('NEWSLETTER_VOICE') ?? 'first',
             Env::string('NEWSLETTER_STYLE') ?? '',
-            Env::int('NEWSLETTER_WORDS', 350),
+            Env::int('NEWSLETTER_WORDS', 300),
             Env::flag('NEWSLETTER_FACT_CHECK'),
             $logger,
         );
