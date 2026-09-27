@@ -81,6 +81,42 @@ final class GitHubSourceTest extends TestCase
         $this->assertNotEmpty($report->highlights);
     }
 
+    public function testCollectFillsInWhatTrimmedEventPayloadsLeaveOut(): void
+    {
+        // The shapes the events feed serves now: no titles, no commit lists.
+        $events = [
+            ['type' => 'PullRequestReviewEvent', 'public' => true, 'created_at' => '2026-09-27T16:00:00Z', 'repo' => ['name' => 'discord-php/DiscordPHP'],
+                'payload' => ['action' => 'created', 'review' => ['state' => 'changes_requested'], 'pull_request' => ['number' => 1414]]],
+            ['type' => 'PullRequestEvent', 'public' => true, 'created_at' => '2026-09-27T15:00:00Z', 'repo' => ['name' => 'discord-php/DiscordPHP'],
+                'payload' => ['action' => 'opened', 'number' => 1495, 'pull_request' => ['number' => 1495]]],
+            ['type' => 'PushEvent', 'public' => true, 'created_at' => '2026-09-27T14:00:00Z', 'repo' => ['name' => 'Valgorithms/DiscordPHP-NHA'],
+                'payload' => ['ref' => 'refs/heads/main', 'before' => 'aaa1111', 'head' => 'bbb2222']],
+            ['type' => 'PushEvent', 'public' => true, 'created_at' => '2026-09-27T13:00:00Z', 'repo' => ['name' => 'discord-php/DiscordPHP.org'],
+                'payload' => ['ref' => 'refs/heads/main', 'before' => '0000000000000000000000000000000000000000', 'head' => 'ccc3333']],
+        ];
+        $http = self::fakeHttp([
+            '/pulls/1414' => ['number' => 1414, 'title' => 'Normalize options', 'merged' => false],
+            '/pulls/1495' => ['number' => 1495, 'title' => 'Register the scheduled event exception handlers', 'merged' => false],
+            '/compare/aaa1111...bbb2222' => ['total_commits' => 2, 'commits' => [
+                ['sha' => 'd1', 'commit' => ['message' => "Teach the planner to mine\n\nbody"]],
+                ['sha' => 'd2', 'commit' => ['message' => 'Fix the relay']],
+            ]],
+            '/events' => $events,
+            '/search/commits' => ['items' => []],
+        ], $log);
+
+        $report = self::settle((new GitHubSource($http, 'valzargaming'))->collect($this->window()));
+
+        $this->assertSame([
+            '[discord-php/DiscordPHP.org] pushed to main',
+            '[Valgorithms/DiscordPHP-NHA] pushed 2 commits to main: Teach the planner to mine; Fix the relay',
+            '[discord-php/DiscordPHP] opened pull request #1495 "Register the scheduled event exception handlers"',
+            '[discord-php/DiscordPHP] reviewed pull request #1414 "Normalize options" (changes requested)',
+        ], $report->highlights);
+        $this->assertSame(2, $report->stats['commits']);
+        $this->assertEmpty(array_filter($log, static fn($u) => str_contains($u, '0000000')), 'a new-branch push has nothing to compare');
+    }
+
     public function testCollectReportsApiFailuresAsErrors(): void
     {
         $http = self::fakeHttp(['/events' => [401, '{"message":"Bad credentials"}'], '/search/commits' => ['items' => []]]);

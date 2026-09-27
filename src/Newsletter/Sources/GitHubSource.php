@@ -40,6 +40,12 @@ final class GitHubSource implements Source
     /** The events API serves at most 300 events (3 pages of 100). */
     private const MAX_EVENT_PAGES = 3;
 
+    /** Cap on the extra requests {@see enrich()} makes for one window. */
+    private const MAX_ENRICH_REQUESTS = 40;
+
+    /** A push that created its branch has no "before" commit to compare with. */
+    private const NULL_SHA = '0000000000000000000000000000000000000000';
+
     public function __construct(
         private readonly JsonClient $http,
         private readonly string $username,
@@ -56,6 +62,7 @@ final class GitHubSource implements Source
     {
         $errors = [];
         $events = $this->fetchEvents($window, 1, [])
+            ->then(fn(array $events): PromiseInterface => $this->enrich($window, $events))
             ->then(null, function (\Throwable $e) use (&$errors): array {
                 $errors[] = 'events: ' . $e->getMessage();
 
@@ -226,6 +233,87 @@ final class GitHubSource implements Source
         $stats = ['repositories' => count($repos)] + array_filter($stats);
 
         return new SourceReport('github', "GitHub activity (@{$this->username})", $highlights, $stats, $errors);
+    }
+
+    /**
+     * Fills in what the events feed leaves out of its (now trimmed) payloads:
+     * pull request and issue titles, and the commits of each push (via the
+     * compare API, which also covers branches the commit search cannot see).
+     * A lookup that fails just leaves that event as it was.
+     *
+     * @param list<array<string, mixed>> $events
+     *
+     * @return PromiseInterface<list<array<string, mixed>>>
+     */
+    public function enrich(Window $window, array $events): PromiseInterface
+    {
+        $lookups = [];   // url => list of [event index, kind]
+        foreach ($events as $i => $event) {
+            if (! $this->keep($window, $event['created_at'] ?? null, (bool) ($event['public'] ?? true))) {
+                continue;
+            }
+            $repo = (string) ($event['repo']['name'] ?? '');
+            $payload = (array) ($event['payload'] ?? []);
+            $url = null;
+            $kind = null;
+
+            switch ($event['type'] ?? '') {
+                case 'PullRequestEvent':
+                case 'PullRequestReviewEvent':
+                    $number = $payload['pull_request']['number'] ?? $payload['number'] ?? null;
+                    if ($number !== null && ! isset($payload['pull_request']['title'])) {
+                        [$url, $kind] = [self::API . "/repos/{$repo}/pulls/{$number}", 'pull_request'];
+                    }
+                    break;
+
+                case 'IssuesEvent':
+                case 'IssueCommentEvent':
+                    $number = $payload['issue']['number'] ?? null;
+                    if ($number !== null && ! isset($payload['issue']['title'])) {
+                        [$url, $kind] = [self::API . "/repos/{$repo}/issues/{$number}", 'issue'];
+                    }
+                    break;
+
+                case 'PushEvent':
+                    $before = (string) ($payload['before'] ?? '');
+                    $head = (string) ($payload['head'] ?? '');
+                    if (empty($payload['commits']) && $head !== '' && $before !== '' && $before !== self::NULL_SHA) {
+                        [$url, $kind] = [self::API . "/repos/{$repo}/compare/{$before}...{$head}", 'push'];
+                    }
+                    break;
+            }
+            if ($url !== null) {
+                $lookups[$url][] = [$i, $kind];
+            }
+        }
+
+        $requests = [];
+        foreach (array_slice($lookups, 0, self::MAX_ENRICH_REQUESTS, true) as $url => $targets) {
+            $requests[] = $this->http->get($url, $this->headers())->then(
+                function (array $body) use (&$events, $targets): void {
+                    foreach ($targets as [$i, $kind]) {
+                        if ($kind === 'push') {
+                            $commits = array_map(static fn(array $c) => [
+                                'sha' => (string) ($c['sha'] ?? ''),
+                                'message' => (string) ($c['commit']['message'] ?? ''),
+                                'distinct' => true,
+                            ], (array) ($body['commits'] ?? []));
+                            $events[$i]['payload']['commits'] = $commits;
+                            $events[$i]['payload']['size'] = (int) ($body['total_commits'] ?? count($commits));
+                        } else {
+                            $existing = (array) ($events[$i]['payload'][$kind] ?? []);
+                            $events[$i]['payload'][$kind] = $existing + array_intersect_key($body, array_flip(['number', 'title', 'merged', 'state', 'pull_request']));
+                        }
+                    }
+                },
+                static fn() => null,
+            );
+        }
+
+        // $events is shared by reference with the callbacks above, so read it only once they have all run.
+        return all($requests)->then(function () use (&$events): array {
+            return $events;
+        });
     }
 
     /**
