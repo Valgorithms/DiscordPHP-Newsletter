@@ -13,6 +13,7 @@ declare(strict_types=1);
 
 namespace Tests;
 
+use Newsletter\Bot\ApprovalFlow;
 use Newsletter\Bot\Renderer;
 use Newsletter\Bot\Scheduler;
 use Newsletter\Draft;
@@ -100,5 +101,16 @@ final class BotTest extends TestCase
         $this->assertStringContainsString("couldn't write this one", $json);
         $this->assertStringContainsString('the model returned an empty reply', $json);
         $this->assertStringContainsString('!rewrite', $json);
+    }
+
+    public function testFindsTheEditTextInsideALabelOrAnActionRow(): void
+    {
+        $input = (object) ['type' => 4, 'custom_id' => 'instructions', 'value' => 'Drop the Steam part'];
+        $label = (object) ['type' => 18, 'component' => $input, 'components' => []];
+        $row = (object) ['type' => 1, 'components' => [(object) ['type' => 4, 'custom_id' => 'instructions', 'value' => 'Shorter']]];
+
+        $this->assertSame('Drop the Steam part', ApprovalFlow::submittedValue([$label], 'instructions'));
+        $this->assertSame('Shorter', ApprovalFlow::submittedValue([$row], 'instructions'));
+        $this->assertNull(ApprovalFlow::submittedValue([$label], 'something-else'));
     }
 }

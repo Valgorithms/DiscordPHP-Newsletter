@@ -58,6 +58,9 @@ use function React\Promise\resolve;
  */
 final class ApprovalFlow
 {
+    /** Custom id prefix of the "Request edits" modal: `newsletter-edit:{key}`. */
+    private const EDIT_MODAL = 'newsletter-edit:';
+
     /** @var array<string, true> Editions with an action in flight (double-click guard). */
     private array $busy = [];
 
@@ -215,6 +218,12 @@ final class ApprovalFlow
 
     private function onInteraction(Interaction $interaction): void
     {
+        if ($interaction->type === Interaction::TYPE_MODAL_SUBMIT
+            && str_starts_with((string) $interaction->data?->custom_id, self::EDIT_MODAL)) {
+            $this->onEditSubmitted($interaction, substr((string) $interaction->data->custom_id, strlen(self::EDIT_MODAL)));
+
+            return;
+        }
         if ($interaction->type !== Interaction::TYPE_MESSAGE_COMPONENT
             || ! ($parsed = Renderer::parseCustomId((string) $interaction->data?->custom_id))) {
             return;
@@ -246,15 +255,66 @@ final class ApprovalFlow
             ->setPlaceholder('e.g. Shorter intro, drop the Steam section, mention that v10.20 shipped.')
             ->setMaxLength(2000)
             ->setRequired(true);
-        $modal = ModalBuilder::new('Edit the newsletter', "newsletter-edit:{$key}", [Label::new('What should change?', $input)]);
+        $modal = ModalBuilder::new('Edit the newsletter', self::EDIT_MODAL . $key, [Label::new('What should change?', $input)]);
 
-        $interaction->respondWithModal($modal, function (Interaction $submit, $components) use ($key): void {
-            $instructions = trim((string) ($components->get('custom_id', 'instructions')?->value ?? ''));
-            $submit->acknowledge();
-            if ($instructions !== '') {
-                $this->revise($key, $instructions)->then(null, fn(\Throwable $e) => $this->logger->warning("Revision failed: {$e->getMessage()}"));
+        // The submission is handled by onInteraction() rather than a callback here, so
+        // it still arrives after a restart and however long the owner takes to type.
+        $interaction->respondWithModal($modal)
+            ->then(null, fn(\Throwable $e) => $this->logger->warning("Could not open the edit box: {$e->getMessage()}"));
+    }
+
+    private function onEditSubmitted(Interaction $submit, string $key): void
+    {
+        if ($submit->user?->id !== $this->ownerId) {
+            $submit->respondWithMessage(MessageBuilder::new()->setContent('Only the newsletter owner can do that.'), true);
+
+            return;
+        }
+        $submit->acknowledge();
+
+        $instructions = trim((string) self::submittedValue($submit->data->components ?? [], 'instructions'));
+        $edition = $this->state->edition($key);
+        if ($instructions === '') {
+            $this->logger->warning("The edit box for {$key} arrived without text");
+            $this->dm('⚠️ Your edits arrived empty, so nothing changed. Reply to the draft with them in plain words instead.');
+        } elseif ($edition === null || $edition['status'] !== StateStore::STATUS_PENDING) {
+            $this->dm("That draft is " . ($edition['status'] ?? 'gone') . ', so the edits were not applied.');
+        } else {
+            $this->logger->info("Edits requested for {$key}");
+            $this->revise($key, $instructions)->then(null, fn(\Throwable $e) => $this->logger->warning("Revision failed: {$e->getMessage()}"));
+        }
+    }
+
+    /**
+     * Finds a submitted modal field's value by custom id, however it is nested:
+     * directly, inside an action row's `components`, or inside a Label's
+     * `component`. Walked here rather than through DiscordPHP's modal-submit
+     * helper, which misses fields inside Labels.
+     *
+     * @param iterable<mixed> $components
+     */
+    public static function submittedValue(iterable $components, string $customId): ?string
+    {
+        foreach ($components as $component) {
+            if (! is_object($component)) {
+                continue;
             }
-        });
+            if (($component->custom_id ?? null) === $customId && ($component->value ?? null) !== null) {
+                return (string) $component->value;
+            }
+            $children = [];
+            if (($component->component ?? null) !== null) {
+                $children[] = $component->component;
+            }
+            foreach ($component->components ?? [] as $child) {
+                $children[] = $child;
+            }
+            if ($children && ($value = self::submittedValue($children, $customId)) !== null) {
+                return $value;
+            }
+        }
+
+        return null;
     }
 
     private function onMessage(Message $message): void
