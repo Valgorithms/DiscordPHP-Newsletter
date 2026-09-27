@@ -1,0 +1,47 @@
+{
+    "name": "valzargaming/discordphp-newsletter",
+    "description": "A DiscordPHP bot that writes a daily activity newsletter from GitHub, Discord and Steam with a locally hosted Ollama model, sends it to its owner for approval (and LLM-applied edits), then posts it.",
+    "keywords": ["discord", "discordphp", "newsletter", "ollama", "llm", "github", "steam", "reactphp", "bot"],
+    "license": "MIT",
+    "type": "project",
+    "authors": [
+        {
+            "name": "Valithor Obsidion",
+            "email": "valithor@discordphp.org"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "team-reflex/discord-php": "dev-master",
+        "discord-php/http": "dev-master as 10.9.8"
+    },
+    "require-dev": {
+        "friendsofphp/php-cs-fixer": "^3",
+        "phpunit/phpunit": "^9.6"
+    },
+    "scripts": {
+        "unit": "phpunit",
+        "cs": "php-cs-fixer fix",
+        "cs-check": "php-cs-fixer fix --dry-run --diff",
+        "preview": "php preview.php"
+    },
+    "scripts-descriptions": {
+        "unit": "Run the unit tests (no network, no Discord, no Ollama needed).",
+        "preview": "Collect today's activity and print the LLM-written draft without touching Discord."
+    },
+    "minimum-stability": "dev",
+    "prefer-stable": true,
+    "config": {
+        "sort-packages": true
+    },
+    "autoload": {
+        "psr-4": {
+            "Newsletter\\": "src/Newsletter/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Tests\\": "tests/"
+        }
+    }
+}
