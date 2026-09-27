@@ -54,14 +54,18 @@ final class Renderer
      * The approval request for a stored edition.
      *
      * @param array<string, mixed> $edition
+     * @param list<string>         $sites   Repositories an approval also publishes to.
      */
-    public static function approval(array $edition, Window $window): MessageBuilder
+    public static function approval(array $edition, Window $window, array $sites = []): MessageBuilder
     {
         $draft = Draft::fromArray($edition['draft']);
         $revision = (int) $edition['revision'];
 
         $header = "📰 **Newsletter draft for {$window->label()}** · revision {$revision}\n"
             . 'Reply to this message with any edits you want (in plain words), or use the buttons.';
+        if ($sites) {
+            $header .= "\n-# Approving also publishes it to " . implode(', ', $sites) . '.';
+        }
         foreach ((array) ($edition['reports'] ?? []) as $report) {
             foreach ((array) ($report['errors'] ?? []) as $error) {
                 $header .= "\n-# ⚠️ {$report['source']}: " . mb_substr((string) $error, 0, 180);

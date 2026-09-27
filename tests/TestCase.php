@@ -69,19 +69,36 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
     }
 
     /**
-     * A JSON client answering by URL substring.
+     * A JSON client answering by URL substring. A route key may start with a
+     * method (`PUT /contents`) to match only that method.
      *
-     * @param array<string, array<mixed>|array{0: int, 1: string}> $routes substring => decoded body, or [status, raw body]
-     * @param list<string>                                         $log    Receives every requested URL.
+     * @param array<string, array<mixed>|array{0: int, 1: string}|\Closure> $routes   substring => decoded body, [status, raw body],
+     *                                                                                or fn(string $body) returning either
+     * @param list<string>                                                  $log      Every requested URL (non-GET ones as "METHOD url").
+     * @param list<array<mixed>>                                            $payloads Every decoded request body.
      */
-    protected static function fakeHttp(array $routes, ?array &$log = null): JsonClient
+    protected static function fakeHttp(array $routes, ?array &$log = null, ?array &$payloads = null): JsonClient
     {
         $log = [];
+        $payloads = [];
 
-        return new JsonClient(static function (string $url) use ($routes, &$log): PromiseInterface {
-            $log[] = $url;
+        return new JsonClient(static function (string $method, string $url, array $headers, string $body) use ($routes, &$log, &$payloads): PromiseInterface {
+            $log[] = $method === 'GET' ? $url : "{$method} {$url}";
+            if ($body !== '') {
+                $payloads[] = json_decode($body, true);
+            }
             foreach ($routes as $needle => $response) {
-                if (str_contains($url, $needle)) {
+                if (preg_match('/^(GET|PUT|POST|PATCH|DELETE) (.*)$/', (string) $needle, $m)) {
+                    if ($m[1] !== $method) {
+                        continue;
+                    }
+                    $needle = $m[2];
+                }
+                if (str_contains($url, (string) $needle)) {
+                    if ($response instanceof \Closure) {
+                        $response = $response($body);
+                    }
+
                     return resolve(isset($response[0], $response[1]) && is_int($response[0]) && is_string($response[1]) ? $response : [200, json_encode($response)]);
                 }
             }

@@ -19,8 +19,9 @@ use React\Http\Browser;
 use React\Promise\PromiseInterface;
 
 /**
- * Tiny async `GET → decoded JSON` client for the third-party APIs the
- * newsletter reads (GitHub, Steam), driven by the bot's ReactPHP loop.
+ * Tiny async JSON client for the third-party APIs the newsletter reads
+ * (GitHub, Steam) and writes (GitHub contents, for the websites), driven by
+ * the bot's ReactPHP loop.
  *
  * The transport is injectable, exactly like {@see \Newsletter\Llm\OllamaClient},
  * so the sources can be unit-tested with canned responses and no network.
@@ -29,11 +30,11 @@ use React\Promise\PromiseInterface;
  */
 final class JsonClient
 {
-    /** @var callable(string, array<string,string>): PromiseInterface<array{0: int, 1: string}> */
+    /** @var callable(string, string, array<string,string>, string): PromiseInterface<array{0: int, 1: string}> */
     private $transport;
 
     /**
-     * @param callable|null      $transport `fn(string $url, array $headers): PromiseInterface<array{0: int, 1: string}>`
+     * @param callable|null      $transport `fn(string $method, string $url, array $headers, string $body): PromiseInterface<array{0: int, 1: string}>`
      *                                      resolving with `[status, body]`. Defaults to a {@see Browser}.
      * @param float              $timeout   Per-request timeout in seconds.
      * @param LoopInterface|null $loop      Only used to build the default transport.
@@ -46,25 +47,44 @@ final class JsonClient
     /**
      * GETs `$url` and resolves with the decoded JSON body.
      *
-     * Rejects with a {@see \RuntimeException} on a non-2xx status or a body
-     * that is not a JSON object/array.
-     *
      * @param array<string, string> $headers
      *
      * @return PromiseInterface<array<mixed>>
      */
     public function get(string $url, array $headers = []): PromiseInterface
     {
-        $headers += ['Accept' => 'application/json', 'User-Agent' => 'DiscordPHP-Newsletter'];
+        return $this->request('GET', $url, $headers);
+    }
 
-        return ($this->transport)($url, $headers)->then(static function (array $response) use ($url): array {
+    /**
+     * Sends a request (with `$payload` JSON-encoded as the body, when given)
+     * and resolves with the decoded JSON response.
+     *
+     * Rejects with a {@see \RuntimeException} on a non-2xx status (the
+     * exception's code is the HTTP status) or a body that is not JSON.
+     *
+     * @param array<string, string> $headers
+     * @param array<mixed>|null     $payload
+     *
+     * @return PromiseInterface<array<mixed>>
+     */
+    public function request(string $method, string $url, array $headers = [], ?array $payload = null): PromiseInterface
+    {
+        $headers += ['Accept' => 'application/json', 'User-Agent' => 'DiscordPHP-Newsletter'];
+        $body = '';
+        if ($payload !== null) {
+            $headers += ['Content-Type' => 'application/json'];
+            $body = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        }
+
+        return ($this->transport)($method, $url, $headers, $body)->then(static function (array $response) use ($url): array {
             [$status, $body] = $response;
             $decoded = json_decode($body, true);
 
             if ($status < 200 || $status >= 300) {
                 $message = is_array($decoded) && isset($decoded['message']) ? (string) $decoded['message'] : substr($body, 0, 200);
 
-                throw new \RuntimeException("HTTP {$status} from " . self::redact($url) . ": {$message}");
+                throw new \RuntimeException("HTTP {$status} from " . self::redact($url) . ": {$message}", $status);
             }
             if (! is_array($decoded)) {
                 throw new \RuntimeException('Non-JSON response from ' . self::redact($url));
@@ -81,7 +101,7 @@ final class JsonClient
     }
 
     /**
-     * @return callable(string, array<string,string>): PromiseInterface<array{0: int, 1: string}>
+     * @return callable(string, string, array<string,string>, string): PromiseInterface<array{0: int, 1: string}>
      */
     private static function browserTransport(float $timeout, ?LoopInterface $loop): callable
     {
@@ -90,8 +110,8 @@ final class JsonClient
             ->withTimeout($timeout)
             ->withRejectErrorResponse(false);
 
-        return static fn(string $url, array $headers): PromiseInterface
-            => $browser->get($url, $headers)
+        return static fn(string $method, string $url, array $headers, string $body): PromiseInterface
+            => $browser->request($method, $url, $headers, $body)
                 ->then(static fn(ResponseInterface $response): array => [$response->getStatusCode(), (string) $response->getBody()]);
     }
 }

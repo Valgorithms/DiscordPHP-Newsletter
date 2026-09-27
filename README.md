@@ -37,7 +37,13 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
 - **Catch-up.** If the bot was offline at the scheduled time, it drafts the missed edition on startup. Each window starts
   where the previous one ended.
 
-DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, and `!help`.
+**Websites.** An approved edition is also committed to the Newsletter pages of
+[discordphp.org](https://discordphp.org/newsletter.html) and [valgorithms.com](https://www.valgorithms.com/newsletter.html).
+Set `PUBLISH_TARGETS` (`owner/repo[@branch]:path.json`, comma-separated) and a token that can write each repository's
+contents. The push to each site's `main` rebuilds and deploys it. If a site fails (an expired token, say), the Discord
+post stands, the DM says which site failed, and `!publish` retries.
+
+DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!publish [date]` re-publishes a posted edition to the websites, and `!help`.
 
 ## Setup
 
@@ -76,6 +82,7 @@ php bot.php
 | `src/Newsletter/Writer.php` | The LLM chain: per-source notes → compose `Draft` JSON (schema-constrained) → fact-check → revise on request, with a template fallback |
 | `src/Newsletter/ReplyInterpreter.php` | Approve / skip / edit classification of free-text DM replies |
 | `src/Newsletter/Pipeline.php` | Collect → write → store an edition |
+| `src/Newsletter/SitePublisher.php` | Commits approved editions to each website's `newsletter.json` (GitHub contents API) |
 | `src/Newsletter/Bot/ApprovalFlow.php` | DMs, buttons, the edit modal, DM replies and commands, and posting |
 | `src/Newsletter/Bot/ActivityRecorder.php` | Gateway listeners that record the day, plus audit-log lookups |
 | `src/Newsletter/Bot/Scheduler.php` | Daily timer on the bot's event loop, with catch-up |

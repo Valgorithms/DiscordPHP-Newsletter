@@ -52,13 +52,14 @@ final class BotTest extends TestCase
             'reports' => [['source' => 'steam', 'errors' => ['private profile']]],
         ];
 
-        $json = json_encode(Renderer::approval($edition, $window));
+        $json = json_encode(Renderer::approval($edition, $window, ['discord-php/DiscordPHP.org', 'valzargaming/valgorithms.com']), JSON_UNESCAPED_SLASHES);
 
         $this->assertStringContainsString('newsletter:approve:2026-09-27:2', $json);
         $this->assertStringContainsString('newsletter:edit:2026-09-27:2', $json);
         $this->assertStringContainsString('newsletter:reject:2026-09-27:2', $json);
         $this->assertStringContainsString('private profile', $json);
         $this->assertStringContainsString('shorter', $json);
+        $this->assertStringContainsString('also publishes it to discord-php/DiscordPHP.org, valzargaming/valgorithms.com', $json);
     }
 
     public function testNextAndPreviousRunRespectTheTimeZone(): void

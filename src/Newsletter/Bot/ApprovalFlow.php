@@ -25,6 +25,7 @@ use Discord\WebSockets\Event;
 use Newsletter\Draft;
 use Newsletter\Pipeline;
 use Newsletter\ReplyInterpreter;
+use Newsletter\SitePublisher;
 use Newsletter\StateStore;
 use Newsletter\Window;
 use Newsletter\Writer;
@@ -43,7 +44,10 @@ use function React\Promise\resolve;
  *  - a DM reply in plain words ("drop the Steam bit and mention the release"),
  *    which the local model classifies and, for edits, applies before sending a
  *    new revision for approval;
- *  - DM commands: `!generate`, `!status`, `!help`.
+ *  - DM commands: `!generate`, `!status`, `!publish`, `!help`.
+ *
+ * An approved edition is posted to the newsletter channel and, when a
+ * {@see SitePublisher} is configured, committed to each website too.
  *
  * All state lives in the {@see StateStore}, and button ids carry the edition
  * key and revision, so drafts stay actionable across restarts and a stale
@@ -66,6 +70,7 @@ final class ApprovalFlow
         private readonly string $channelId,
         private readonly \DateTimeZone $tz,
         private readonly LoggerInterface $logger,
+        private readonly ?SitePublisher $site = null,
     ) {}
 
     public function register(): void
@@ -94,7 +99,7 @@ final class ApprovalFlow
      */
     public function sendForApproval(array $edition): PromiseInterface
     {
-        return $this->dm(Renderer::approval($edition, $this->window($edition)))
+        return $this->dm(Renderer::approval($edition, $this->window($edition), $this->site?->describe() ?? []))
             ->then(function (Message $message) use ($edition): array {
                 $edition = $this->state->edition($edition['key']) ?? $edition;
                 $edition['status'] = StateStore::STATUS_PENDING;
@@ -125,6 +130,7 @@ final class ApprovalFlow
                     $this->state->putEdition($edition);
                     $this->dm("✅ Posted the {$edition['key']} newsletter: {$posted->link}");
                     $this->logger->info("Edition {$edition['key']} posted");
+                    $this->publishToSites($edition['key']);
 
                     return $posted;
                 });
@@ -229,7 +235,8 @@ final class ApprovalFlow
             return;
         }
         if (str_starts_with($content, '!')) {
-            $this->command($message, strtolower(strtok(substr($content, 1), ' ') ?: ''));
+            [$command, $argument] = array_pad(preg_split('/\s+/', substr($content, 1), 2), 2, '');
+            $this->command($message, strtolower($command), trim($argument));
 
             return;
         }
@@ -266,7 +273,7 @@ final class ApprovalFlow
         });
     }
 
-    private function command(Message $message, string $command): void
+    private function command(Message $message, string $command, string $argument = ''): void
     {
         switch ($command) {
             case 'generate':
@@ -276,6 +283,23 @@ final class ApprovalFlow
                 // A manual run covers today so far and leaves the scheduled window alone.
                 $this->generate(Window::since(null, $now), true)
                     ->then(null, fn(\Throwable $e) => $this->fail('generate', $e));
+                break;
+
+            case 'publish':
+                // Re-publish a posted edition to the websites, e.g. after fixing a token.
+                $key = $argument;
+                $posted = array_values(array_filter(
+                    (array) $this->state->get('editions', []),
+                    static fn($e) => is_array($e) && ($e['status'] ?? null) === StateStore::STATUS_POSTED && ($key === '' || $e['key'] === $key),
+                ));
+                usort($posted, static fn($a, $b) => strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? '')));
+                if ($this->site === null) {
+                    $message->reply('No websites are configured (PUBLISH_TARGETS).');
+                } elseif ($posted === []) {
+                    $message->reply($key === '' ? 'No posted edition to publish yet.' : "No posted edition \"{$key}\".");
+                } else {
+                    $this->publishToSites($posted[0]['key']);
+                }
                 break;
 
             case 'status':
@@ -290,8 +314,27 @@ final class ApprovalFlow
                     'Reply to a draft in plain words to request edits, or say `approve` / `skip`.',
                     '`!generate`: draft a newsletter for today so far',
                     '`!status`: list drafts waiting on you',
+                    '`!publish [date]`: publish a posted edition to the websites again (the latest if no date)',
                 ]));
         }
+    }
+
+    /**
+     * Commits a posted edition to each website and DMs the outcome. A failed
+     * site never undoes the Discord post: `!publish` retries it.
+     */
+    private function publishToSites(string $key): void
+    {
+        $edition = $this->state->edition($key);
+        if ($this->site === null || $edition === null) {
+            return;
+        }
+        $this->site->publish($edition, $this->window($edition))->then(function (array $lines) use ($key): void {
+            $edition = $this->state->edition($key);
+            $edition['site'] = ['published_at' => date(DATE_ATOM), 'results' => $lines];
+            $this->state->putEdition($edition);
+            $this->dm("🌐 Website publishing for {$key} (each site rebuilds in a few minutes):\n" . implode("\n", array_map(static fn($l) => "• {$l}", $lines)));
+        });
     }
 
     // --- helpers ---------------------------------------------------------------------

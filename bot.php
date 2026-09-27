@@ -86,7 +86,7 @@ $sources[] = new DiscordSource(
 );
 
 $pipeline = new Pipeline($sources, $writer, $state, $logger);
-$flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger);
+$flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger, Services::sitePublisher($discord->getLoop(), $logger));
 
 // --- wiring --------------------------------------------------------------------------
 
