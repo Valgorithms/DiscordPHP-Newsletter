@@ -48,14 +48,17 @@ approved newsletter to the servers that follow it, straight after posting. The b
 for its own posts. If that fails, the DM says why, and `!publish` retries it along with the websites.
 
 **Reddit.** Approved editions are also posted as text posts to each target in `REDDIT_TARGETS`: subreddits such
-as `r/ValZarGaming`, and your own profile as `u/valzargaming`. The headline (with the date) becomes the title, and
+as `r/ValZarGaming`, and the posting account's own profile as `u/<name>` (Reddit allows no other profile). The headline (with the date) becomes the title, and
 `owner/repo#123` references become GitHub links. Publishing the same edition again edits its posts instead of adding
 new ones. To set it up:
 
-1. On <https://www.reddit.com/prefs/apps>, create a **script** app. Reddit may ask you to register for API access
-   first. Put its id (under the app's name) and secret in `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`, and your
+1. Reddit requires a separate **bot account** registered for API access (its Responsible Builder Policy; your own
+   account can't be registered). Create one (e.g. u/Valgorithms), make it a moderator of the subreddit so its posts
+   skip the spam filter, and register it while signed in as yourself. Once approved, sign in as the bot and create a
+   **script** app on <https://www.reddit.com/prefs/apps> with the redirect uri `http://localhost:65010/reddit-token`.
+   Put the app's id (under its name) and secret in `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`, and the bot's
    username in `REDDIT_USERNAME`.
-2. Sign-in: run `php reddit-token.php` once and follow it, to get a `REDDIT_REFRESH_TOKEN`. That works with
+2. Sign-in: run `php reddit-token.php` once, signed into Reddit as the bot, to get a `REDDIT_REFRESH_TOKEN`. That works with
    two-factor authentication. Without 2FA, `REDDIT_PASSWORD` works too.
 3. At startup the bot logs `Reddit publishing is ready`, or which target will fail and why.
 
