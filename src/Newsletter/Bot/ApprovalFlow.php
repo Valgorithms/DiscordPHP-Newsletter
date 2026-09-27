@@ -28,6 +28,7 @@ use Newsletter\Pipeline;
 use Newsletter\RedditPublisher;
 use Newsletter\ReplyInterpreter;
 use Newsletter\SitePublisher;
+use Newsletter\TelegramPublisher;
 use Newsletter\Sources\SourceReport;
 use Newsletter\StateStore;
 use Newsletter\Window;
@@ -78,7 +79,8 @@ final class ApprovalFlow
         private readonly LoggerInterface $logger,
         private readonly ?SitePublisher $site = null,
         private readonly ?RedditPublisher $reddit = null,
-        private readonly string $redditFooter = '',
+        private readonly string $footer = '',
+        private readonly ?TelegramPublisher $telegram = null,
     ) {}
 
     public function register(): void
@@ -141,6 +143,7 @@ final class ApprovalFlow
                     $this->crosspost($edition['key'], $posted);
                     $this->publishToSites($edition['key']);
                     $this->publishToReddit($edition['key']);
+                    $this->publishToTelegram($edition['key']);
 
                     return $posted;
                 });
@@ -405,13 +408,14 @@ final class ApprovalFlow
                 $announcement = $this->discord->getChannel($this->channelId)?->type === Channel::TYPE_GUILD_ANNOUNCEMENT;
                 if ($posted === []) {
                     $message->reply($key === '' ? 'No posted edition to publish yet.' : "No posted edition \"{$key}\".");
-                } elseif ($this->site === null && $this->reddit === null && ! $announcement) {
-                    $message->reply('Nothing to publish to: the newsletter channel is not an announcement channel, and no websites (PUBLISH_TARGETS) or Reddit targets (REDDIT_TARGETS) are configured.');
+                } elseif ($this->site === null && $this->reddit === null && $this->telegram === null && ! $announcement) {
+                    $message->reply('Nothing to publish to: the newsletter channel is not an announcement channel, and no websites (PUBLISH_TARGETS), Reddit targets (REDDIT_TARGETS) or Telegram chats (TELEGRAM_CHATS) are configured.');
                 } else {
                     $message->reply("🔁 Publishing the {$posted[0]['key']} newsletter again…");
                     $this->crosspost($posted[0]['key']);
                     $this->publishToSites($posted[0]['key']);
                     $this->publishToReddit($posted[0]['key']);
+                    $this->publishToTelegram($posted[0]['key']);
                 }
                 break;
 
@@ -428,7 +432,7 @@ final class ApprovalFlow
                     '`!generate`: draft a newsletter for today so far',
                     '`!status`: list drafts waiting on you',
                     '`!rewrite [date]`: have the model write the waiting draft again from scratch',
-                    '`!publish [date]`: retry publishing a posted edition to following servers, the websites and Reddit (the latest if no date)',
+                    '`!publish [date]`: retry publishing a posted edition to following servers, the websites, Reddit and Telegram (the latest if no date)',
                 ]));
         }
     }
@@ -473,7 +477,7 @@ final class ApprovalFlow
         if ($this->reddit === null || $edition === null) {
             return;
         }
-        $this->reddit->publish($edition, $this->window($edition), $this->redditFooter)->then(function (array $results) use ($key): void {
+        $this->reddit->publish($edition, $this->window($edition), $this->footer)->then(function (array $results) use ($key): void {
             $edition = $this->state->edition($key);
             $lines = [];
             foreach ($results as $target => $post) {
@@ -492,10 +496,39 @@ final class ApprovalFlow
         });
     }
 
+    /**
+     * Posts a posted edition to each Telegram chat (editing its messages where it
+     * was posted before) and DMs the outcome. A failure never undoes the Discord
+     * post: `!publish` retries it.
+     */
+    private function publishToTelegram(string $key): void
+    {
+        $edition = $this->state->edition($key);
+        if ($this->telegram === null || $edition === null) {
+            return;
+        }
+        $this->telegram->publish($edition, $this->window($edition), $this->footer)->then(function (array $results) use ($key): void {
+            $edition = $this->state->edition($key);
+            $lines = [];
+            foreach ($results as $chat => $post) {
+                if (isset($post['error'])) {
+                    $lines[] = "• {$chat}: failed ({$post['error']})";
+                    continue;
+                }
+                $edition['telegram'][$chat] = ['message_ids' => $post['message_ids'], 'url' => $post['url'], 'published_at' => date(DATE_ATOM)];
+                $lines[] = "• {$chat}: " . ($post['edited'] ? 'updated' : 'posted') . ($post['url'] ? " {$post['url']}" : '');
+            }
+            $this->state->putEdition($edition);
+            $failed = count(array_filter($results, static fn($p) => isset($p['error'])));
+            $this->logger->info("Telegram publishing for {$key}: " . (count($results) - $failed) . ' done, ' . $failed . ' failed');
+            $this->dm("✈️ Telegram publishing for {$key}:\n" . implode("\n", $lines) . ($failed ? "\nSend `!publish {$key}` to retry." : ''));
+        });
+    }
+
     /** @return list<string> Where an approval publishes besides the newsletter channel. */
     private function destinations(): array
     {
-        return array_merge($this->site?->describe() ?? [], $this->reddit?->describe() ?? []);
+        return array_merge($this->site?->describe() ?? [], $this->reddit?->describe() ?? [], $this->telegram?->describe() ?? []);
     }
 
     /**

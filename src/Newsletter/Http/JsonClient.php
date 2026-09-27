@@ -107,9 +107,10 @@ final class JsonClient
             $decoded = json_decode($body, true);
 
             if ($status < 200 || $status >= 300) {
-                $message = is_array($decoded) && isset($decoded['message'])
-                    ? (string) $decoded['message']
-                    : (is_array($decoded) && is_string($decoded['error'] ?? null) ? $decoded['error'] : substr($body, 0, 200));
+                // GitHub and Steam say `message`, OAuth says `error`, Telegram says `description`.
+                $message = is_array($decoded) && is_string($decoded['message'] ?? $decoded['description'] ?? $decoded['error'] ?? null)
+                    ? (string) ($decoded['message'] ?? $decoded['description'] ?? $decoded['error'])
+                    : substr($body, 0, 200);
 
                 throw new \RuntimeException("HTTP {$status} from " . self::redact($url) . ": {$message}", $status);
             }

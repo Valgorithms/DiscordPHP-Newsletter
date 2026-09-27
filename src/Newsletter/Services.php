@@ -193,6 +193,36 @@ final class Services
         return $reddit;
     }
 
+    /**
+     * The Telegram publisher, when TELEGRAM_CHATS names any channels or groups.
+     * Logs at startup whether the bot can post in each.
+     */
+    public static function telegramPublisher(LoopInterface $loop, LoggerInterface $logger): ?TelegramPublisher
+    {
+        $chats = self::idList('TELEGRAM_CHATS');
+        if ($chats === []) {
+            return null;
+        }
+        $token = Env::string('TELEGRAM_BOT_TOKEN');
+        if ($token === null) {
+            $logger->warning('Telegram publishing is off until TELEGRAM_BOT_TOKEN is set.');
+
+            return null;
+        }
+
+        $telegram = new TelegramPublisher(new JsonClient(null, 30.0, $loop), $chats, $token, $logger);
+        $telegram->check()->then(static function (array $problems) use ($logger, $telegram): void {
+            if ($problems === []) {
+                $logger->info('Telegram publishing is ready: ' . implode(', ', $telegram->describe()));
+            }
+            foreach ($problems as $problem) {
+                $logger->warning("Telegram publishing will fail for {$problem}");
+            }
+        });
+
+        return $telegram;
+    }
+
     /** @return list<string> */
     public static function idList(string $key): array
     {

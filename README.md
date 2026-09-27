@@ -62,6 +62,14 @@ new ones. To set it up:
    two-factor authentication. Without 2FA, `REDDIT_PASSWORD` works too.
 3. At startup the bot logs `Reddit publishing is ready`, or which target will fail and why.
 
+**Telegram.** Approved editions are also posted to each chat in `TELEGRAM_CHATS`: public channels or groups as
+`@name` (or a t.me link), private ones by their `-100…` id. Create a bot with @BotFather, or reuse one you already
+have. Its token goes in `TELEGRAM_BOT_TOKEN`, and the bot must be an admin of each chat that may post. The
+newsletter is sent as formatted text (bold headline and section titles, clickable GitHub references and links),
+split between paragraphs when it is longer than one message. Publishing an edition again edits its messages
+instead of sending new ones. The bot only sends and edits, so a token shared with another bot (such as a bridge)
+is fine. At startup it logs `Telegram publishing is ready`, or which chat will fail and why.
+
 **Websites.** An approved edition is also committed to the Newsletter pages of
 [discordphp.org](https://discordphp.org/newsletter.html) and [valgorithms.com](https://www.valgorithms.com/newsletter.html).
 Set `PUBLISH_TARGETS` (`owner/repo[@branch]:path.json`, comma-separated) and a token that can write each repository's
@@ -69,7 +77,7 @@ contents. The push to each site's `main` rebuilds and deploys it. If a site fail
 post stands, the DM says which site failed, and `!publish` retries.
 
 DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!rewrite [date]` has the model write the waiting draft again from the same activity, `!publish [date]` retries publishing a
-posted edition to following servers, the websites and Reddit, and `!help`.
+posted edition to following servers, the websites, Reddit and Telegram, and `!help`.
 
 ## Setup
 
@@ -145,6 +153,7 @@ on a release, a manual run, or a push whose commit message contains "build docs"
 | `src/Newsletter/Writer.php` | The LLM chain: per-source themes → Markdown prose draft → fact-check → revise on request, with a template fallback that says why |
 | `src/Newsletter/ReplyInterpreter.php` | Approve / skip / edit classification of free-text DM replies |
 | `src/Newsletter/Pipeline.php` | Collect → write → store an edition |
+| `src/Newsletter/TelegramPublisher.php` | Posts approved editions to Telegram channels and groups through the Bot API |
 | `src/Newsletter/SitePublisher.php` | Commits approved editions to each website's `newsletter.json` (GitHub contents API) |
 | `src/Newsletter/Bot/ApprovalFlow.php` | DMs, buttons, the edit modal, DM replies and commands, and posting |
 | `src/Newsletter/Bot/ActivityRecorder.php` | Gateway listeners that record the day, plus audit-log lookups |
