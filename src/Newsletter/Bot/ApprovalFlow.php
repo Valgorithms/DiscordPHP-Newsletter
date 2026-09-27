@@ -18,6 +18,7 @@ use Discord\Builders\Components\TextInput;
 use Discord\Builders\MessageBuilder;
 use Discord\Builders\ModalBuilder;
 use Discord\Discord;
+use Discord\Parts\Channel\Channel;
 use Discord\Parts\Channel\Message;
 use Discord\Parts\Interactions\Interaction;
 use Discord\Parts\User\User;
@@ -134,6 +135,7 @@ final class ApprovalFlow
                     $this->state->putEdition($edition);
                     $this->dm("✅ Posted the {$edition['key']} newsletter: {$posted->link}");
                     $this->logger->info("Edition {$edition['key']} posted");
+                    $this->crosspost($edition['key'], $posted);
                     $this->publishToSites($edition['key']);
 
                     return $posted;
@@ -396,11 +398,14 @@ final class ApprovalFlow
                     static fn($e) => is_array($e) && ($e['status'] ?? null) === StateStore::STATUS_POSTED && ($key === '' || $e['key'] === $key),
                 ));
                 usort($posted, static fn($a, $b) => strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? '')));
-                if ($this->site === null) {
-                    $message->reply('No websites are configured (PUBLISH_TARGETS).');
-                } elseif ($posted === []) {
+                $announcement = $this->discord->getChannel($this->channelId)?->type === Channel::TYPE_GUILD_ANNOUNCEMENT;
+                if ($posted === []) {
                     $message->reply($key === '' ? 'No posted edition to publish yet.' : "No posted edition \"{$key}\".");
+                } elseif ($this->site === null && ! $announcement) {
+                    $message->reply('Nothing to publish to: the newsletter channel is not an announcement channel, and no websites are configured (PUBLISH_TARGETS).');
                 } else {
+                    $message->reply("🔁 Publishing the {$posted[0]['key']} newsletter again…");
+                    $this->crosspost($posted[0]['key']);
                     $this->publishToSites($posted[0]['key']);
                 }
                 break;
@@ -418,9 +423,38 @@ final class ApprovalFlow
                     '`!generate`: draft a newsletter for today so far',
                     '`!status`: list drafts waiting on you',
                     '`!rewrite [date]`: have the model write the waiting draft again from scratch',
-                    '`!publish [date]`: publish a posted edition to the websites again (the latest if no date)',
+                    '`!publish [date]`: retry publishing a posted edition to following servers and the websites (the latest if no date)',
                 ]));
         }
+    }
+
+    /**
+     * Publishes the posted newsletter to the servers following the channel, when
+     * it is an announcement channel, and DMs the outcome. Skipped for any other
+     * kind of channel, and for an edition already published.
+     *
+     * @param Message|null $posted The posted message, when it is at hand; fetched otherwise.
+     */
+    private function crosspost(string $key, ?Message $posted = null): void
+    {
+        $edition = $this->state->edition($key);
+        $channel = $this->discord->getChannel($this->channelId);
+        if ($edition === null || ! empty($edition['crossposted']) || $channel?->type !== Channel::TYPE_GUILD_ANNOUNCEMENT || empty($edition['posted_message_id'])) {
+            return;
+        }
+
+        ($posted ? resolve($posted) : $channel->messages->fetch($edition['posted_message_id']))
+            ->then(static fn(Message $message): PromiseInterface => $message->crossposted ? resolve($message) : $message->crosspost())
+            ->then(function () use ($key): void {
+                $edition = $this->state->edition($key);
+                $edition['crossposted'] = true;
+                $this->state->putEdition($edition);
+                $this->logger->info("Edition {$key} published to following servers");
+                $this->dm("📣 Published the {$key} newsletter to the servers that follow the channel.");
+            }, function (\Throwable $e) use ($key): void {
+                $this->logger->warning("Could not publish edition {$key} to following servers: {$e->getMessage()}");
+                $this->dm("⚠️ Posted, but could not publish the {$key} newsletter to following servers ({$e->getMessage()}). Send `!publish {$key}` to try again.");
+            });
     }
 
     /**

@@ -43,14 +43,18 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
 - **Catch-up.** If the bot was offline at the scheduled time, it drafts the missed edition on startup. Each window starts
   where the previous one ended.
 
+**Announcement channels.** If the newsletter channel is an announcement channel, the bot also publishes each
+approved newsletter to the servers that follow it, straight after posting. The bot only needs *Send Messages* there
+for its own posts. If that fails, the DM says why, and `!publish` retries it along with the websites.
+
 **Websites.** An approved edition is also committed to the Newsletter pages of
 [discordphp.org](https://discordphp.org/newsletter.html) and [valgorithms.com](https://www.valgorithms.com/newsletter.html).
 Set `PUBLISH_TARGETS` (`owner/repo[@branch]:path.json`, comma-separated) and a token that can write each repository's
 contents. The push to each site's `main` rebuilds and deploys it. If a site fails (an expired token, say), the Discord
 post stands, the DM says which site failed, and `!publish` retries.
 
-DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!rewrite [date]` has the model write the waiting draft again from the same activity, `!publish [date]` re-publishes a
-posted edition to the websites, and `!help`.
+DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!rewrite [date]` has the model write the waiting draft again from the same activity, `!publish [date]` retries publishing a
+posted edition to following servers and the websites, and `!help`.
 
 ## Setup
 
