@@ -68,7 +68,7 @@ final class Window
         return $this->end->modify('-1 second')->format('l, F j, Y');
     }
 
-    /** Short range for prompts and footers, e.g. `Sep 27 00:00 → Sep 27 23:30 (America/New_York)`. */
+    /** Short range for prompts and footers, e.g. `Sep 27 00:00 → Sep 27 18:00 (America/New_York)`. */
     public function range(): string
     {
         return $this->start->format('M j H:i') . ' → ' . $this->end->format('M j H:i') . ' (' . $this->end->getTimezone()->getName() . ')';

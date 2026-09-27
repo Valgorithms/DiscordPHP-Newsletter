@@ -11,7 +11,7 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
 ## How a day works
 
 ```
- all day                                 NEWSLETTER_TIME (e.g. 23:30)
+ all day                                 NEWSLETTER_TIME (18:00 Eastern)
  ───────────────────────────────────►   ┌─────────────────────────────────────────────────────┐
  gateway → ActivityRecorder             │ collect (parallel)                                  │
    your messages, threads, voice,       │   GitHub  events feed + commit search               │
