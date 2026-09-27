@@ -1,0 +1,47 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "vzg-newsletter",
+  "post": {
+    "entrypoints": {
+      "default": {
+        "entry": "splash.html"
+      },
+      "game": {
+        "entry": "game.html"
+      }
+    }
+  },
+  "server": {},
+  "permissions": {
+    "http": {
+      "domains": ["discordphp.org"]
+    },
+    "redis": true,
+    "reddit": true
+  },
+  "scheduler": {
+    "tasks": {
+      "newsletter-sync": {
+        "endpoint": "/internal/scheduler/newsletter-sync",
+        "cron": "*/15 * * * *"
+      }
+    }
+  },
+  "menu": {
+    "items": [
+      {
+        "label": "Post the newsletter now",
+        "description": "Post any new newsletter edition from discordphp.org without waiting for the schedule.",
+        "location": "subreddit",
+        "forUserType": "moderator",
+        "endpoint": "/internal/on/menu/new-post"
+      }
+    ]
+  },
+  "triggers": {
+    "onAppInstall": "/internal/on/app/install"
+  },
+  "scripts": {
+    "dev": "npm run watch"
+  }
+}
