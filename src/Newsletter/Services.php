@@ -153,6 +153,46 @@ final class Services
         return $publisher;
     }
 
+    /**
+     * The Reddit publisher, when REDDIT_TARGETS names any subreddits or
+     * profiles. Logs at startup whether it can sign in and post to each.
+     */
+    public static function redditPublisher(LoopInterface $loop, LoggerInterface $logger): ?RedditPublisher
+    {
+        $targets = self::idList('REDDIT_TARGETS') ?: self::idList('REDDIT_SUBREDDIT');
+        if ($targets === []) {
+            return null;
+        }
+        $missing = array_filter(['REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET', 'REDDIT_USERNAME'], static fn(string $k) => Env::string($k) === null);
+        if ($missing) {
+            $logger->warning('Reddit publishing is off until these are set: ' . implode(', ', $missing));
+
+            return null;
+        }
+
+        $reddit = new RedditPublisher(
+            new JsonClient(null, 30.0, $loop),
+            $targets,
+            (string) Env::string('REDDIT_CLIENT_ID'),
+            (string) Env::string('REDDIT_CLIENT_SECRET'),
+            (string) Env::string('REDDIT_USERNAME'),
+            Env::string('REDDIT_REFRESH_TOKEN'),
+            Env::string('REDDIT_PASSWORD'),
+            Env::string('REDDIT_FLAIR_ID'),
+            $logger,
+        );
+        $reddit->check()->then(static function (array $problems) use ($logger, $reddit): void {
+            if ($problems === []) {
+                $logger->info('Reddit publishing is ready: ' . implode(', ', $reddit->describe()));
+            }
+            foreach ($problems as $problem) {
+                $logger->warning("Reddit publishing will fail for {$problem}");
+            }
+        });
+
+        return $reddit;
+    }
+
     /** @return list<string> */
     public static function idList(string $key): array
     {

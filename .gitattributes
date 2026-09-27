@@ -11,5 +11,6 @@
 /phpdoc.dist.xml   export-ignore
 /phpacker.json     export-ignore
 /phpacker.ini      export-ignore
+/reddit-token.php  export-ignore
 /AGENTS.md         export-ignore
 /bin/build         export-ignore

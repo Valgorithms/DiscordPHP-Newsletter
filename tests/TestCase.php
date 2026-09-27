@@ -85,7 +85,12 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
         return new JsonClient(static function (string $method, string $url, array $headers, string $body) use ($routes, &$log, &$payloads): PromiseInterface {
             $log[] = $method === 'GET' ? $url : "{$method} {$url}";
             if ($body !== '') {
-                $payloads[] = json_decode($body, true);
+                // JSON bodies decode as JSON; form-encoded ones (Reddit) as fields.
+                $decoded = json_decode($body, true);
+                if (! is_array($decoded)) {
+                    parse_str($body, $decoded);
+                }
+                $payloads[] = $decoded + ['__headers' => $headers];
             }
             foreach ($routes as $needle => $response) {
                 if (preg_match('/^(GET|PUT|POST|PATCH|DELETE) (.*)$/', (string) $needle, $m)) {

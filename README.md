@@ -47,6 +47,18 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
 approved newsletter to the servers that follow it, straight after posting. The bot only needs *Send Messages* there
 for its own posts. If that fails, the DM says why, and `!publish` retries it along with the websites.
 
+**Reddit.** Approved editions are also posted as text posts to each target in `REDDIT_TARGETS`: subreddits such
+as `r/ValZarGaming`, and your own profile as `u/valzargaming`. The headline (with the date) becomes the title, and
+`owner/repo#123` references become GitHub links. Publishing the same edition again edits its posts instead of adding
+new ones. To set it up:
+
+1. On <https://www.reddit.com/prefs/apps>, create a **script** app. Reddit may ask you to register for API access
+   first. Put its id (under the app's name) and secret in `REDDIT_CLIENT_ID` / `REDDIT_CLIENT_SECRET`, and your
+   username in `REDDIT_USERNAME`.
+2. Sign-in: run `php reddit-token.php` once and follow it, to get a `REDDIT_REFRESH_TOKEN`. That works with
+   two-factor authentication. Without 2FA, `REDDIT_PASSWORD` works too.
+3. At startup the bot logs `Reddit publishing is ready`, or which target will fail and why.
+
 **Websites.** An approved edition is also committed to the Newsletter pages of
 [discordphp.org](https://discordphp.org/newsletter.html) and [valgorithms.com](https://www.valgorithms.com/newsletter.html).
 Set `PUBLISH_TARGETS` (`owner/repo[@branch]:path.json`, comma-separated) and a token that can write each repository's
@@ -54,7 +66,7 @@ contents. The push to each site's `main` rebuilds and deploys it. If a site fail
 post stands, the DM says which site failed, and `!publish` retries.
 
 DM commands (from you only): `!generate` drafts today-so-far on demand, `!status` lists drafts waiting on you, `!rewrite [date]` has the model write the waiting draft again from the same activity, `!publish [date]` retries publishing a
-posted edition to following servers and the websites, and `!help`.
+posted edition to following servers, the websites and Reddit, and `!help`.
 
 ## Setup
 

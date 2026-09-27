@@ -119,7 +119,7 @@ $sources[] = new DiscordSource(
 );
 
 $pipeline = new Pipeline($sources, $writer, $state, $logger);
-$flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger, Services::sitePublisher($discord->getLoop(), $logger));
+$flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger, Services::sitePublisher($discord->getLoop(), $logger), Services::redditPublisher($discord->getLoop(), $logger), Env::string('REDDIT_FOOTER') ?? '');
 
 // --- wiring --------------------------------------------------------------------------
 

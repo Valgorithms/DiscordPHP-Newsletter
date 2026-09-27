@@ -25,6 +25,7 @@ use Discord\Parts\User\User;
 use Discord\WebSockets\Event;
 use Newsletter\Draft;
 use Newsletter\Pipeline;
+use Newsletter\RedditPublisher;
 use Newsletter\ReplyInterpreter;
 use Newsletter\SitePublisher;
 use Newsletter\Sources\SourceReport;
@@ -76,6 +77,8 @@ final class ApprovalFlow
         private readonly \DateTimeZone $tz,
         private readonly LoggerInterface $logger,
         private readonly ?SitePublisher $site = null,
+        private readonly ?RedditPublisher $reddit = null,
+        private readonly string $redditFooter = '',
     ) {}
 
     public function register(): void
@@ -104,7 +107,7 @@ final class ApprovalFlow
      */
     public function sendForApproval(array $edition): PromiseInterface
     {
-        return $this->dm(Renderer::approval($edition, $this->window($edition), $this->site?->describe() ?? []))
+        return $this->dm(Renderer::approval($edition, $this->window($edition), $this->destinations()))
             ->then(function (Message $message) use ($edition): array {
                 $edition = $this->state->edition($edition['key']) ?? $edition;
                 $edition['status'] = StateStore::STATUS_PENDING;
@@ -137,6 +140,7 @@ final class ApprovalFlow
                     $this->logger->info("Edition {$edition['key']} posted");
                     $this->crosspost($edition['key'], $posted);
                     $this->publishToSites($edition['key']);
+                    $this->publishToReddit($edition['key']);
 
                     return $posted;
                 });
@@ -401,12 +405,13 @@ final class ApprovalFlow
                 $announcement = $this->discord->getChannel($this->channelId)?->type === Channel::TYPE_GUILD_ANNOUNCEMENT;
                 if ($posted === []) {
                     $message->reply($key === '' ? 'No posted edition to publish yet.' : "No posted edition \"{$key}\".");
-                } elseif ($this->site === null && ! $announcement) {
-                    $message->reply('Nothing to publish to: the newsletter channel is not an announcement channel, and no websites are configured (PUBLISH_TARGETS).');
+                } elseif ($this->site === null && $this->reddit === null && ! $announcement) {
+                    $message->reply('Nothing to publish to: the newsletter channel is not an announcement channel, and no websites (PUBLISH_TARGETS) or Reddit targets (REDDIT_TARGETS) are configured.');
                 } else {
                     $message->reply("🔁 Publishing the {$posted[0]['key']} newsletter again…");
                     $this->crosspost($posted[0]['key']);
                     $this->publishToSites($posted[0]['key']);
+                    $this->publishToReddit($posted[0]['key']);
                 }
                 break;
 
@@ -423,7 +428,7 @@ final class ApprovalFlow
                     '`!generate`: draft a newsletter for today so far',
                     '`!status`: list drafts waiting on you',
                     '`!rewrite [date]`: have the model write the waiting draft again from scratch',
-                    '`!publish [date]`: retry publishing a posted edition to following servers and the websites (the latest if no date)',
+                    '`!publish [date]`: retry publishing a posted edition to following servers, the websites and Reddit (the latest if no date)',
                 ]));
         }
     }
@@ -455,6 +460,42 @@ final class ApprovalFlow
                 $this->logger->warning("Could not publish edition {$key} to following servers: {$e->getMessage()}");
                 $this->dm("⚠️ Posted, but could not publish the {$key} newsletter to following servers ({$e->getMessage()}). Send `!publish {$key}` to try again.");
             });
+    }
+
+    /**
+     * Posts a posted edition to each Reddit target (editing the post where it
+     * already has one) and DMs the outcome. A failure never undoes the Discord
+     * post: `!publish` retries it, and only edits the posts that went through.
+     */
+    private function publishToReddit(string $key): void
+    {
+        $edition = $this->state->edition($key);
+        if ($this->reddit === null || $edition === null) {
+            return;
+        }
+        $this->reddit->publish($edition, $this->window($edition), $this->redditFooter)->then(function (array $results) use ($key): void {
+            $edition = $this->state->edition($key);
+            $lines = [];
+            foreach ($results as $target => $post) {
+                $where = RedditPublisher::display($target);
+                if (isset($post['error'])) {
+                    $lines[] = "• {$where}: failed ({$post['error']})";
+                    continue;
+                }
+                $edition['reddit'][$target] = ['id' => $post['id'], 'url' => $post['url'], 'published_at' => date(DATE_ATOM)];
+                $lines[] = "• {$where}: " . ($post['edited'] ? 'updated' : 'posted') . ($post['url'] ? " {$post['url']}" : '');
+            }
+            $this->state->putEdition($edition);
+            $failed = count(array_filter($results, static fn($p) => isset($p['error'])));
+            $this->logger->info("Reddit publishing for {$key}: " . (count($results) - $failed) . ' done, ' . $failed . ' failed');
+            $this->dm("🟠 Reddit publishing for {$key}:\n" . implode("\n", $lines) . ($failed ? "\nSend `!publish {$key}` to retry." : ''));
+        });
+    }
+
+    /** @return list<string> Where an approval publishes besides the newsletter channel. */
+    private function destinations(): array
+    {
+        return array_merge($this->site?->describe() ?? [], $this->reddit?->describe() ?? []);
     }
 
     /**

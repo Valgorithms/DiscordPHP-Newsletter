@@ -70,19 +70,46 @@ final class JsonClient
      */
     public function request(string $method, string $url, array $headers = [], ?array $payload = null): PromiseInterface
     {
-        $headers += ['Accept' => 'application/json', 'User-Agent' => 'DiscordPHP-Newsletter'];
         $body = '';
         if ($payload !== null) {
             $headers += ['Content-Type' => 'application/json'];
             $body = json_encode($payload, JSON_THROW_ON_ERROR | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
         }
 
+        return $this->send($method, $url, $headers, $body);
+    }
+
+    /**
+     * POSTs `$fields` form-encoded (`application/x-www-form-urlencoded`, as
+     * Reddit's API expects) and resolves with the decoded JSON response.
+     *
+     * @param array<string, string> $headers
+     * @param array<string, scalar> $fields
+     *
+     * @return PromiseInterface<array<mixed>>
+     */
+    public function form(string $url, array $fields, array $headers = []): PromiseInterface
+    {
+        return $this->send('POST', $url, $headers + ['Content-Type' => 'application/x-www-form-urlencoded'], http_build_query($fields));
+    }
+
+    /**
+     * @param array<string, string> $headers
+     *
+     * @return PromiseInterface<array<mixed>>
+     */
+    private function send(string $method, string $url, array $headers, string $body): PromiseInterface
+    {
+        $headers += ['Accept' => 'application/json', 'User-Agent' => 'DiscordPHP-Newsletter'];
+
         return ($this->transport)($method, $url, $headers, $body)->then(static function (array $response) use ($url): array {
             [$status, $body] = $response;
             $decoded = json_decode($body, true);
 
             if ($status < 200 || $status >= 300) {
-                $message = is_array($decoded) && isset($decoded['message']) ? (string) $decoded['message'] : substr($body, 0, 200);
+                $message = is_array($decoded) && isset($decoded['message'])
+                    ? (string) $decoded['message']
+                    : (is_array($decoded) && is_string($decoded['error'] ?? null) ? $decoded['error'] : substr($body, 0, 200));
 
                 throw new \RuntimeException("HTTP {$status} from " . self::redact($url) . ": {$message}", $status);
             }
