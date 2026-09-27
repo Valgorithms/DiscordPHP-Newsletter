@@ -41,7 +41,10 @@ final class Env
 
     /**
      * Loads `KEY=VALUE` lines from `$path` into the process environment via
-     * `putenv()`. Blank lines and `#` comments are skipped, and a key already
+     * `putenv()`. One pair of matching surrounding quotes is stripped from a
+     * value, as phpdotenv (which PHPacker's CLI uses to read the same file)
+     * requires quotes around any value containing whitespace. Blank lines
+     * and `#` comments are skipped, and a key already
      * present in `$_ENV` is left alone (a real environment variable wins).
      *
      * @throws \RuntimeException When the file does not exist.
@@ -58,6 +61,9 @@ final class Env
                 continue;
             }
             [$name, $value] = array_map('trim', explode('=', $line, 2));
+            if (strlen($value) >= 2 && ($value[0] === '"' || $value[0] === "'") && $value[-1] === $value[0]) {
+                $value = substr($value, 1, -1);
+            }
             if ($name !== '' && ! array_key_exists($name, $_ENV)) {
                 putenv("{$name}={$value}");
             }
