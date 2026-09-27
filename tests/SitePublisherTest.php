@@ -100,8 +100,29 @@ final class SitePublisherTest extends TestCase
         $publisher = new SitePublisher($http, SitePublisher::parseTargets('a/site:x.json,b/site:x.json'), static fn(string $owner) => $owner === 'b' ? 'tkn' : null);
 
         $this->assertSame([
-            'a/site: failed (no token for a; set PUBLISH_GITHUB_TOKEN)',
+            'a/site: failed (no token for a; set PUBLISH_GITHUB_TOKEN or GITHUB_TOKEN)',
             'b/site: https://b/commit',
         ], self::settle($publisher->publish($this->edition(), $this->window())));
+    }
+
+    public function testCheckReportsSitesTheTokenCannotPushTo(): void
+    {
+        $http = self::fakeHttp([
+            '/repos/discord-php/DiscordPHP.org' => [404, '{"message":"Not Found"}'],
+            '/repos/valzargaming/valgorithms.com' => ['permissions' => ['pull' => true, 'push' => true]],
+            '/repos/someone/readonly' => ['permissions' => ['pull' => true, 'push' => false]],
+        ]);
+        $publisher = new SitePublisher(
+            $http,
+            SitePublisher::parseTargets('discord-php/DiscordPHP.org:data/newsletter.json,valzargaming/valgorithms.com:site/data/newsletter.json,someone/readonly:x.json,nobody/tokenless:x.json'),
+            static fn(string $owner) => $owner === 'nobody' ? null : 'tkn',
+        );
+
+        $problems = self::settle($publisher->check());
+
+        $this->assertCount(3, $problems);
+        $this->assertStringStartsWith('discord-php/DiscordPHP.org: not visible to the token', $problems[0]);
+        $this->assertSame('someone/readonly: the token can read it but not push to it', $problems[1]);
+        $this->assertSame('nobody/tokenless: no token', $problems[2]);
     }
 }

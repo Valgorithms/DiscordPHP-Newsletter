@@ -95,8 +95,9 @@ final class Services
      *
      * Each site's owner needs a token that can write its repository's contents:
      * `PUBLISH_GITHUB_TOKEN_<OWNER>` (owner upper-cased, non-alphanumerics as `_`,
-     * e.g. `PUBLISH_GITHUB_TOKEN_DISCORD_PHP`) wins over `PUBLISH_GITHUB_TOKEN`.
-     * A fine-grained token covers one owner, so two owners usually need two.
+     * e.g. `PUBLISH_GITHUB_TOKEN_DISCORD_PHP`) wins over `PUBLISH_GITHUB_TOKEN`,
+     * which wins over `GITHUB_TOKEN`. A fine-grained token covers one owner, so
+     * two owners usually need two; a classic `repo`-scope token covers both.
      */
     public static function sitePublisher(LoopInterface $loop, LoggerInterface $logger): ?SitePublisher
     {
@@ -105,15 +106,21 @@ final class Services
             return null;
         }
         $tokenFor = static fn(string $owner): ?string => Env::string('PUBLISH_GITHUB_TOKEN_' . strtoupper((string) preg_replace('/[^A-Za-z0-9]/', '_', $owner)))
-            ?? Env::string('PUBLISH_GITHUB_TOKEN');
-        foreach ($targets as $target) {
-            if ($tokenFor(explode('/', $target['repo'])[0]) === null) {
-                $logger->warning("No PUBLISH_GITHUB_TOKEN for {$target['repo']}; publishing there will fail until one is set.");
-            }
-        }
-        $logger->info('Approved editions are also published to: ' . implode(', ', array_column($targets, 'repo')));
+            ?? Env::string('PUBLISH_GITHUB_TOKEN')
+            ?? Env::string('GITHUB_TOKEN');
+        $publisher = new SitePublisher(new JsonClient(null, 30.0, $loop), $targets, $tokenFor, $logger);
 
-        return new SitePublisher(new JsonClient(null, 30.0, $loop), $targets, $tokenFor, $logger);
+        $sites = implode(', ', array_column($targets, 'repo'));
+        $publisher->check()->then(static function (array $problems) use ($logger, $sites): void {
+            if ($problems === []) {
+                $logger->info("Website publishing is ready: {$sites}");
+            }
+            foreach ($problems as $problem) {
+                $logger->warning("Website publishing will fail for {$problem}");
+            }
+        });
+
+        return $publisher;
     }
 
     /** @return list<string> */

@@ -77,6 +77,46 @@ final class SitePublisher
         return $targets;
     }
 
+    /**
+     * Asks GitHub whether each target's token may push to its repository, so a
+     * token that cannot is reported at startup instead of at the first approval.
+     * Resolves with one problem per line; an empty list means every site is writable.
+     *
+     * @return PromiseInterface<list<string>>
+     */
+    public function check(): PromiseInterface
+    {
+        $problems = [];
+        $chain = resolve(null);
+        foreach ($this->targets as $target) {
+            $chain = $chain->then(function () use ($target, &$problems): PromiseInterface {
+                $token = ($this->tokenFor)(explode('/', $target['repo'])[0]);
+                if ($token === null) {
+                    $problems[] = "{$target['repo']}: no token";
+
+                    return resolve(null);
+                }
+
+                return $this->http->get(self::API . "/repos/{$target['repo']}", self::headers($token))->then(
+                    function (array $repo) use ($target, &$problems): void {
+                        if (! ($repo['permissions']['push'] ?? false)) {
+                            $problems[] = "{$target['repo']}: the token can read it but not push to it";
+                        }
+                    },
+                    function (\Throwable $e) use ($target, &$problems): void {
+                        $problems[] = "{$target['repo']}: " . ($e->getCode() === 404
+                            ? 'not visible to the token (a fine-grained token only covers its own owner\'s repositories, and orgs can block personal tokens)'
+                            : $e->getMessage());
+                    },
+                );
+            });
+        }
+
+        return $chain->then(function () use (&$problems): array {
+            return $problems;
+        });
+    }
+
     /** @return list<string> `owner/repo` of each target, for messages. */
     public function describe(): array
     {
@@ -158,6 +198,16 @@ final class SitePublisher
         });
     }
 
+    /** @return array<string, string> */
+    private static function headers(string $token): array
+    {
+        return [
+            'Accept' => 'application/vnd.github+json',
+            'X-GitHub-Api-Version' => '2022-11-28',
+            'Authorization' => "Bearer {$token}",
+        ];
+    }
+
     /**
      * @param array{repo: string, branch: string, path: string} $target
      * @param array<string, mixed>                              $entry
@@ -169,13 +219,9 @@ final class SitePublisher
         $owner = explode('/', $target['repo'])[0];
         $token = ($this->tokenFor)($owner);
         if ($token === null) {
-            return reject(new \RuntimeException("no token for {$owner}; set PUBLISH_GITHUB_TOKEN"));
+            return reject(new \RuntimeException("no token for {$owner}; set PUBLISH_GITHUB_TOKEN or GITHUB_TOKEN"));
         }
-        $headers = [
-            'Accept' => 'application/vnd.github+json',
-            'X-GitHub-Api-Version' => '2022-11-28',
-            'Authorization' => "Bearer {$token}",
-        ];
+        $headers = self::headers($token);
         $url = self::API . "/repos/{$target['repo']}/contents/" . implode('/', array_map('rawurlencode', explode('/', $target['path'])));
 
         return $this->http->get($url . '?ref=' . rawurlencode($target['branch']), $headers)
