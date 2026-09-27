@@ -1,7 +1,17 @@
 {
     "name": "valzargaming/discordphp-newsletter",
     "description": "A DiscordPHP bot that writes a daily activity newsletter from GitHub, Discord and Steam with a locally hosted Ollama model, sends it to its owner for approval (and LLM-applied edits), then posts it.",
-    "keywords": ["discord", "discordphp", "newsletter", "ollama", "llm", "github", "steam", "reactphp", "bot"],
+    "keywords": [
+        "discord",
+        "discordphp",
+        "newsletter",
+        "ollama",
+        "llm",
+        "github",
+        "steam",
+        "reactphp",
+        "bot"
+    ],
     "license": "MIT",
     "type": "project",
     "authors": [
@@ -17,17 +27,30 @@
     },
     "require-dev": {
         "friendsofphp/php-cs-fixer": "^3",
-        "phpunit/phpunit": "^9.6"
+        "phpacker/phpacker": "^0.6.4",
+        "phpunit/phpunit": "^9.6",
+        "symfony/console": "^7.4"
     },
     "scripts": {
         "unit": "phpunit",
         "cs": "php-cs-fixer fix",
         "cs-check": "php-cs-fixer fix --dry-run --diff",
-        "preview": "php preview.php"
+        "preview": "php preview.php",
+        "phpacker": [
+            "@phpacker:bot",
+            "@phpacker:preview"
+        ],
+        "phpacker:bot": "phpacker build --src=bot.php --dest=bin/build/bot",
+        "phpacker:preview": "phpacker build --src=preview.php --dest=bin/build/preview",
+        "docs": "php tools/phpDocumentor --config phpdoc.dist.xml --no-interaction"
     },
     "scripts-descriptions": {
         "unit": "Run the unit tests (no network, no Discord, no Ollama needed).",
-        "preview": "Collect today's activity and print the LLM-written draft without touching Discord."
+        "preview": "Collect today's activity and print the LLM-written draft without touching Discord.",
+        "phpacker": "Build standalone binaries for both entry points (bot.php and preview.php) for every platform.",
+        "phpacker:bot": "Build a standalone binary for the bot (bot.php) into bin/build/bot.",
+        "phpacker:preview": "Build a standalone binary for the dry run (preview.php) into bin/build/preview.",
+        "docs": "Build the class reference into build/ with phpDocumentor (installed to tools/, see the README)."
     },
     "minimum-stability": "dev",
     "prefer-stable": true,

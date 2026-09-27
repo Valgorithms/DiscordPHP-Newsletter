@@ -33,11 +33,43 @@ use Newsletter\Window;
 
 use function React\Promise\set_rejection_handler;
 
-require __DIR__ . '/vendor/autoload.php';
+/*
+ * The project directory. Works when run as `php bot.php` from the checkout, and when
+ * run as a phpacker binary (which lands in `bin/build/<name>/<platform>/`),
+ * launched directly or from a shortcut, from any working directory: it walks up
+ * from the executable, then from the working directory, to the first folder that
+ * has `vendor/autoload.php` or a `.env`. This runs before the autoloader, so it
+ * stays inline.
+ */
+$baseDir = (static function (): string {
+    $seen = [];
+    foreach ([\Phar::running(false) ?: null, __FILE__, \getcwd() ?: null] as $start) {
+        if ($start === null) {
+            continue;
+        }
+        $dir = \is_dir($start) ? $start : \dirname((string) \preg_replace('#^phar://#', '', $start));
+        for ($i = 0; $i < 12 && ! isset($seen[$dir]); $i++) {
+            $seen[$dir] = true;
+            if (\is_file($dir . '/vendor/autoload.php') || \is_file($dir . '/.env')) {
+                return $dir;
+            }
+            if (($up = \dirname($dir)) === $dir) {
+                break;
+            }
+            $dir = $up;
+        }
+    }
+
+    return \getcwd() ?: __DIR__;
+})();
+
+\is_file($baseDir . '/vendor/autoload.php')
+    ? require $baseDir . '/vendor/autoload.php'
+    : throw new \RuntimeException("Composer's autoloader was not found. Run `composer install`, and keep the binary inside the project folder (searched up from " . \dirname(\Phar::running(false) ?: __FILE__) . ').');
 
 // --- configuration -------------------------------------------------------------
 
-($envPath = Env::locate(__DIR__)) ? Env::load($envPath) : throw new RuntimeException('No .env found. Run: cp env.example .env');
+($envPath = Env::locate($baseDir)) ? Env::load($envPath) : throw new RuntimeException('No .env found. Run: cp env.example .env');
 
 $token = Env::string('TOKEN') ?? throw new RuntimeException('TOKEN (the Discord bot token) is required.');
 $ownerId = Env::string('OWNER_ID') ?? throw new RuntimeException('OWNER_ID (your Discord user id) is required.');
@@ -65,8 +97,8 @@ set_rejection_handler(static fn(Throwable $e) => $logger->warning("Unhandled rej
 
 // --- services --------------------------------------------------------------------
 
-$state = new StateStore(__DIR__ . '/var/state.json');
-$activityLog = new DiscordActivityLog(__DIR__ . '/var/discord-activity.jsonl');
+$state = new StateStore($baseDir . '/var/state.json');
+$activityLog = new DiscordActivityLog($baseDir . '/var/discord-activity.jsonl');
 $ollama = Services::ollama($discord->getLoop());
 $writer = Services::writer($ollama, $logger);
 Services::checkOllama($ollama, $logger);

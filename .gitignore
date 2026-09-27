@@ -9,3 +9,13 @@ composer.lock
 .idea
 .vscode
 .DS_Store
+
+# phpacker build output: never commit or publish (a packed binary can be decompiled)
+/bin/build
+
+# phpDocumentor
+/build
+/.phpdoc
+/tools
+/.phive
+/phive.xml

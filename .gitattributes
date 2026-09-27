@@ -1,0 +1,15 @@
+# Normalize line endings on checkin
+* text=auto
+
+# Keep the distribution archive lean: dev-only files are not shipped
+/.github           export-ignore
+/tests             export-ignore
+/.gitattributes    export-ignore
+/.gitignore        export-ignore
+/.php-cs-fixer.dist.php export-ignore
+/phpunit.xml       export-ignore
+/phpdoc.dist.xml   export-ignore
+/phpacker.json     export-ignore
+/phpacker.ini      export-ignore
+/AGENTS.md         export-ignore
+/bin/build         export-ignore

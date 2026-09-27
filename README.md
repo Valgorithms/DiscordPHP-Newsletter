@@ -73,6 +73,43 @@ php bot.php
    lifetime playtime, so daily playtime is the difference between hourly snapshots. The first day after install only
    counts from the first snapshot.
 
+### Standalone binaries
+
+[phpacker](https://github.com/phpacker/phpacker) packs `bot.php` (and the `preview.php` dry run) with its own PHP
+into a single executable, so the machine running the bot needs no PHP install:
+
+```
+composer phpacker            # both entry points, every platform
+composer phpacker:bot        # bot.php     → bin/build/bot/<platform>/
+composer phpacker:preview    # preview.php → bin/build/preview/<platform>/
+```
+
+A binary finds `vendor/`, `.env` and `var/` by walking up from the executable (then from the working directory), so
+it runs from `bin/build/...`, or from a shortcut in any folder, as long as it stays inside the checkout. `bin/build`
+is gitignored. **Never commit or share a built binary**: it can be decompiled, and it runs with your `.env`.
+
+phpacker downloads its PHP builds from GitHub the first time. If that fails with "Failed to fetch release data",
+GitHub has rate-limited you: give phpacker a token. It reads `GITHUB_TOKEN` from PHP's `$_ENV`, which Windows' default
+`variables_order` leaves empty, so pass that setting too (PowerShell):
+
+```
+$env:GITHUB_TOKEN = '<a GitHub token>'; php -d variables_order=EGPCS vendor/bin/phpacker build --src=bot.php --dest=bin/build/bot
+```
+
+### Class reference
+
+The class reference is built with [phpDocumentor](https://www.phpdoc.org/) into `build/`:
+
+```
+mkdir tools
+curl -L -o tools/phpDocumentor https://github.com/phpDocumentor/phpDocumentor/releases/latest/download/phpDocumentor.phar
+composer docs
+```
+
+(or `phive install phpDocumentor`). On Windows, use `Invoke-WebRequest -OutFile tools\phpDocumentor <url>` in
+PowerShell instead of `curl -L -o`. `.github/workflows/docs.yml` builds it and publishes it to the `gh-pages` branch
+on a release, a manual run, or a push whose commit message contains "build docs".
+
 ## Privacy notes
 
 - Only **your** messages are recorded with text (clipped to 300 characters) in `var/discord-activity.jsonl`, pruned

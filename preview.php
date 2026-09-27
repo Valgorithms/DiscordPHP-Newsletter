@@ -33,17 +33,49 @@ use Newsletter\Window;
 use React\EventLoop\Loop;
 use React\Promise\PromiseInterface;
 
-require __DIR__ . '/vendor/autoload.php';
+/*
+ * The project directory. Works when run as `php preview.php` from the checkout, and when
+ * run as a phpacker binary (which lands in `bin/build/<name>/<platform>/`),
+ * launched directly or from a shortcut, from any working directory: it walks up
+ * from the executable, then from the working directory, to the first folder that
+ * has `vendor/autoload.php` or a `.env`. This runs before the autoloader, so it
+ * stays inline.
+ */
+$baseDir = (static function (): string {
+    $seen = [];
+    foreach ([\Phar::running(false) ?: null, __FILE__, \getcwd() ?: null] as $start) {
+        if ($start === null) {
+            continue;
+        }
+        $dir = \is_dir($start) ? $start : \dirname((string) \preg_replace('#^phar://#', '', $start));
+        for ($i = 0; $i < 12 && ! isset($seen[$dir]); $i++) {
+            $seen[$dir] = true;
+            if (\is_file($dir . '/vendor/autoload.php') || \is_file($dir . '/.env')) {
+                return $dir;
+            }
+            if (($up = \dirname($dir)) === $dir) {
+                break;
+            }
+            $dir = $up;
+        }
+    }
 
-($envPath = Env::locate(__DIR__)) ? Env::load($envPath) : throw new RuntimeException('No .env found. Run: cp env.example .env');
+    return \getcwd() ?: __DIR__;
+})();
+
+\is_file($baseDir . '/vendor/autoload.php')
+    ? require $baseDir . '/vendor/autoload.php'
+    : throw new \RuntimeException("Composer's autoloader was not found. Run `composer install`, and keep the binary inside the project folder (searched up from " . \dirname(\Phar::running(false) ?: __FILE__) . ').');
+
+($envPath = Env::locate($baseDir)) ? Env::load($envPath) : throw new RuntimeException('No .env found. Run: cp env.example .env');
 
 $showFacts = in_array('--facts', $argv, true);
 $logger = new Logger('Preview', [new StreamHandler('php://stderr', Level::Info)]);
 $loop = Loop::get();
-$state = new StateStore(__DIR__ . '/var/state.json');
+$state = new StateStore($baseDir . '/var/state.json');
 
 $sources = Services::webSources($loop, $state, $logger);
-$sources[] = new DiscordSource(new DiscordActivityLog(__DIR__ . '/var/discord-activity.jsonl'));
+$sources[] = new DiscordSource(new DiscordActivityLog($baseDir . '/var/discord-activity.jsonl'));
 
 $window = Window::since(null, new DateTimeImmutable('now', Services::timezone()));
 $ollama = Services::ollama($loop);
