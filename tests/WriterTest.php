@@ -101,6 +101,43 @@ final class WriterTest extends TestCase
         $this->assertStringContainsString('- polls', $this->prompts[0]);
     }
 
+    public function testReadsTheEarlierEditionsBeforeWritingAndChecking(): void
+    {
+        $previous = [['key' => '2026-09-26', 'date' => 'Saturday, September 26, 2026', 'markdown' => "# Caches get smarter\nI started moving the parts into route namespaces.\n\n— Until tomorrow"]];
+        $writer = new Writer($this->fakeLlm(['- Finished the namespace move', self::DRAFT, self::DRAFT]), 'Valithor');
+
+        self::settle($writer->write($this->window(), $this->reports(), $previous));
+
+        $this->assertStringNotContainsString('Earlier editions', $this->prompts[0], 'notes describe today only');
+        foreach ([1, 2] as $i) {
+            $this->assertStringContainsString('=== Published Saturday, September 26, 2026 ===', $this->prompts[$i]);
+            $this->assertStringContainsString('Headline: Caches get smarter', $this->prompts[$i]);
+            $this->assertStringNotContainsString('# Caches get smarter', $this->prompts[$i], 'their headings are demoted');
+        }
+        $this->assertStringContainsString('Do not reuse their headlines', $this->prompts[1]);
+        $this->assertStringContainsString('Do not announce again', $this->prompts[1]);
+        $this->assertStringContainsString('must not be presented as today', $this->prompts[2]);
+
+        $this->prompts = [];
+        self::settle((new Writer($this->fakeLlm(['notes', self::DRAFT]), 'Valithor', factCheck: false))->write($this->window(), $this->reports()));
+        $this->assertStringNotContainsString('Earlier editions', $this->prompts[1], 'nothing to say before the first edition');
+
+        $this->prompts = [];
+        self::settle((new Writer($this->fakeLlm([self::DRAFT]), 'Valithor'))->revise(Draft::fromLlmJson(self::DRAFT), 'Shorter', [], $previous));
+        $this->assertStringContainsString('Caches get smarter', $this->prompts[0]);
+    }
+
+    public function testNeverReportsTheNewsletterItselfAsWork(): void
+    {
+        $writer = new Writer($this->fakeLlm(['notes', self::DRAFT, self::DRAFT]), 'Valithor');
+
+        self::settle($writer->write($this->window(), $this->reports()));
+
+        $this->assertStringContainsString('the newsletter itself being written, posted or published is not work', $this->prompts[0]);
+        $this->assertStringContainsString("this newsletter's own bot", $this->prompts[0]);
+        $this->assertStringContainsString('Remove any', $this->prompts[2]);
+    }
+
     public function testReviseRejectsWhenTheModelNeverReturnsADraft(): void
     {
         $writer = new Writer($this->fakeLlm(['nope', 'nope']), 'Valithor');

@@ -108,7 +108,8 @@ $recorder = new ActivityRecorder(
     $activityLog,
     $ownerId,
     Services::idList('DISCORD_GUILD_IDS'),
-    Services::idList('DISCORD_IGNORE_CHANNEL_IDS'),
+    // The newsletter channel holds the newsletter itself, which is not the owner's work.
+    [...Services::idList('DISCORD_IGNORE_CHANNEL_IDS'), $channelId],
 );
 
 $sources = Services::webSources($discord->getLoop(), $state, $logger);
@@ -118,7 +119,7 @@ $sources[] = new DiscordSource(
     $recorder->flush(...),
 );
 
-$pipeline = new Pipeline($sources, $writer, $state, $logger);
+$pipeline = new Pipeline($sources, $writer, $state, $logger, Env::int('NEWSLETTER_HISTORY', Services::HISTORY));
 $flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger, Services::sitePublisher($discord->getLoop(), $logger), Services::redditPublisher($discord->getLoop(), $logger), Env::string('NEWSLETTER_FOOTER') ?? Env::string('REDDIT_FOOTER') ?? '', Services::telegramPublisher($discord->getLoop(), $logger));
 
 // --- wiring --------------------------------------------------------------------------

@@ -80,7 +80,7 @@ $sources[] = new DiscordSource(new DiscordActivityLog($baseDir . '/var/discord-a
 $window = Window::since(null, new DateTimeImmutable('now', Services::timezone()));
 $ollama = Services::ollama($loop);
 $writer = Services::writer($ollama, $logger);
-$pipeline = new Newsletter\Pipeline($sources, $writer, $state, $logger);
+$pipeline = new Newsletter\Pipeline($sources, $writer, $state, $logger, Env::int('NEWSLETTER_HISTORY', Services::HISTORY));
 
 // Without the model a preview only shows the template, so say why and stop.
 Services::checkOllama($ollama, $logger)
@@ -92,12 +92,12 @@ Services::checkOllama($ollama, $logger)
 
         return $pipeline->collect($window);
     })
-    ->then(function (array $reports) use ($writer, $window, $showFacts) {
+    ->then(function (array $reports) use ($writer, $window, $showFacts, $pipeline) {
         if ($showFacts) {
             echo implode("\n\n", array_map(static fn(SourceReport $r) => $r->toPromptText(), $reports)), "\n\n";
         }
 
-        return $writer->write($window, $reports);
+        return $writer->write($window, $reports, $pipeline->previous());
     })
     ->then(function (array $written) use ($showFacts): void {
         if ($showFacts) {

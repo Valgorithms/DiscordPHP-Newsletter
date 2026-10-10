@@ -37,14 +37,29 @@ final class Pipeline
 {
     private readonly LoggerInterface $logger;
 
-    /** @param list<Source> $sources */
+    /**
+     * @param list<Source> $sources
+     * @param int          $history How many published editions the writer reads first.
+     */
     public function __construct(
         private readonly array $sources,
         private readonly Writer $writer,
         private readonly StateStore $state,
         ?LoggerInterface $logger = null,
+        private readonly int $history = 5,
     ) {
         $this->logger = $logger ?? new NullLogger();
+    }
+
+    /**
+     * The editions readers have already seen, newest first, for the writer:
+     * the last `$history` published, apart from `$exceptKey`.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function previous(?string $exceptKey = null): array
+    {
+        return $this->state->publishedEditions($this->history, $exceptKey);
     }
 
     /**
@@ -75,7 +90,7 @@ final class Pipeline
         $this->logger->info("Building the newsletter for {$window->range()}");
 
         return $this->collect($window)
-            ->then(fn(array $reports): PromiseInterface => $this->writer->write($window, $reports)
+            ->then(fn(array $reports): PromiseInterface => $this->writer->write($window, $reports, $this->previous())
                 ->then(function (array $written) use ($window, $reports, $manual): array {
                     $edition = [
                         'key' => $this->state->freeEditionKey($window->key()),

@@ -87,6 +87,32 @@ final class BotTest extends TestCase
         $this->assertNull($reloaded->editionByDmMessage('222'));
     }
 
+    public function testStateStoreRemembersPublishedEditionsForTheWriter(): void
+    {
+        $path = self::tempFile('state');
+        $state = new StateStore($path);
+        $window = ['start' => '2026-09-25T00:00:00+00:00', 'end' => '2026-09-25T23:30:00+00:00'];
+        $draft = ['headline' => 'Older', 'intro' => 'Before the archive existed.', 'sections' => [], 'signoff' => ''];
+        // Posted before recordPublished() existed: still found through the editions.
+        $state->putEdition(['key' => '2026-09-25', 'status' => StateStore::STATUS_POSTED, 'window' => $window, 'draft' => $draft, 'created_at' => '2026-09-25T23:30:00+00:00']);
+        $state->putEdition(['key' => '2026-09-26', 'status' => StateStore::STATUS_REJECTED, 'window' => $window, 'draft' => $draft, 'created_at' => '2026-09-26T23:30:00+00:00']);
+        $state->recordPublished(['key' => '2026-09-27', 'window' => ['start' => '2026-09-27T00:00:00+00:00', 'end' => '2026-09-27T23:30:00+00:00'],
+            'draft' => ['headline' => 'Polls land', 'intro' => 'I merged polls.', 'sections' => [], 'signoff' => 'Bye'], 'posted_at' => '2026-09-27T23:40:00+00:00']);
+        $state->pruneEditions(0); // pruning editions must not lose what was published
+
+        $reloaded = new StateStore($path);
+        $published = $reloaded->publishedEditions(5);
+        $this->assertSame(['2026-09-27'], array_column($published, 'key'));
+        $this->assertSame('Sunday, September 27, 2026', $published[0]['date']);
+        $this->assertSame("# Polls land\n\nI merged polls.\n\n— Bye", $published[0]['markdown']);
+        $this->assertSame([], $reloaded->publishedEditions(5, '2026-09-27'));
+        $this->assertSame([], $reloaded->publishedEditions(0));
+
+        $legacy = new StateStore(self::tempFile('state'));
+        $legacy->putEdition(['key' => '2026-09-25', 'status' => StateStore::STATUS_POSTED, 'window' => $window, 'draft' => $draft, 'created_at' => '2026-09-25T23:30:00+00:00']);
+        $this->assertSame(['Older'], array_column($legacy->publishedEditions(5), 'headline'));
+    }
+
     public function testApprovalMessageWarnsWhenTheModelDidNotWriteTheDraft(): void
     {
         $window = new Window(new \DateTimeImmutable('2026-09-27T00:00:00Z'), new \DateTimeImmutable('2026-09-27T23:30:00Z'));

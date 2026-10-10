@@ -137,7 +137,9 @@ final class ApprovalFlow
                     $edition['status'] = StateStore::STATUS_POSTED;
                     $edition['posted_message_id'] = $posted->id;
                     $edition['posted_url'] = $posted->link;
+                    $edition['posted_at'] = date(DATE_ATOM);
                     $this->state->putEdition($edition);
+                    $this->state->recordPublished($edition);
                     $this->dm("✅ Posted the {$edition['key']} newsletter: {$posted->link}");
                     $this->logger->info("Edition {$edition['key']} posted");
                     $this->crosspost($edition['key'], $posted);
@@ -175,7 +177,7 @@ final class ApprovalFlow
             $this->state->putEdition($edition);
             $this->dm("✏️ Revising the {$edition['key']} draft with your notes… (the local model can take a minute)");
 
-            return $this->writer->revise(Draft::fromArray($edition['draft']), $instructions, (array) $edition['notes'])
+            return $this->writer->revise(Draft::fromArray($edition['draft']), $instructions, (array) $edition['notes'], $this->pipeline->previous($edition['key']))
                 ->then(function (Draft $draft) use ($edition): PromiseInterface {
                     $edition['draft'] = $draft->toArray();
                     $edition['revision']++;
@@ -206,7 +208,7 @@ final class ApprovalFlow
             $this->dm("✍️ Rewriting the {$edition['key']} draft from scratch… (the local model can take a few minutes)");
             $reports = array_map(static fn(array $r) => SourceReport::fromArray($r), (array) ($edition['reports'] ?? []));
 
-            return $this->writer->write($this->window($edition), $reports)->then(function (array $written) use ($edition): PromiseInterface {
+            return $this->writer->write($this->window($edition), $reports, $this->pipeline->previous($edition['key']))->then(function (array $written) use ($edition): PromiseInterface {
                 $edition['draft'] = $written['draft']->toArray();
                 $edition['notes'] = $written['notes'];
                 $edition['fallback'] = $written['fallback'];

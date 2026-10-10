@@ -121,6 +121,87 @@ final class GitHubSourceTest extends TestCase
         $this->assertEmpty(array_filter($log, static fn($u) => str_contains($u, '0000000')), 'a new-branch push has nothing to compare');
     }
 
+    public function testLeavesOutTheCommitsThatPublishTheNewsletter(): void
+    {
+        $source = new GitHubSource(self::fakeHttp([]), 'valzargaming', publishTargets: [['repo' => 'discord-php/DiscordPHP.org', 'branch' => 'main']]);
+        $events = [
+            // Only the publisher's commit: no line at all.
+            ['type' => 'PushEvent', 'public' => true, 'created_at' => '2026-09-27T20:00:00Z', 'repo' => ['name' => 'valzargaming/valgorithms.com'],
+                'payload' => ['ref' => 'refs/heads/main', 'size' => 1, 'commits' => [['sha' => 'n1', 'message' => 'Newsletter: 2026-09-26 — Polls land']]]],
+            // A push to a publish target whose commits are unknown: most likely the publisher, so left out.
+            ['type' => 'PushEvent', 'public' => true, 'created_at' => '2026-09-27T19:00:00Z', 'repo' => ['name' => 'discord-php/DiscordPHP.org'],
+                'payload' => ['ref' => 'refs/heads/main', 'before' => 'a', 'head' => 'b']],
+            // Real work mixed with a publish commit: only the work is counted.
+            ['type' => 'PushEvent', 'public' => true, 'created_at' => '2026-09-27T18:00:00Z', 'repo' => ['name' => 'discord-php/DiscordPHP.org'],
+                'payload' => ['ref' => 'refs/heads/main', 'size' => 2, 'distinct_size' => 2, 'commits' => [
+                    ['sha' => 'w1', 'message' => 'Add the newsletter page', 'distinct' => true],
+                    ['sha' => 'n2', 'message' => 'Newsletter: 2026-09-25 — Caches', 'distinct' => true],
+                ]]],
+        ];
+        $commits = [
+            ['sha' => 'n3', 'commit' => ['message' => 'Newsletter: 2026-09-27 — Today', 'author' => ['date' => '2026-09-27T21:00:00Z']], 'repository' => ['full_name' => 'discord-php/DiscordPHP.org', 'private' => false]],
+        ];
+
+        $report = $source->report($this->window(), $events, $commits);
+
+        $this->assertSame(['[discord-php/DiscordPHP.org] pushed 1 commit to main: Add the newsletter page'], $report->highlights);
+        $this->assertSame(1, $report->stats['commits']);
+        $this->assertStringNotContainsString('Newsletter:', $report->toPromptText());
+    }
+
+    public function testOfTheBotsOwnRepositoryKeepsOnlyCommitsThatChangeWhatItDoes(): void
+    {
+        $self = 'Valgorithms/DiscordPHP-Newsletter';
+        $events = [
+            ['type' => 'PushEvent', 'public' => true, 'created_at' => '2026-09-27T18:00:00Z', 'repo' => ['name' => $self],
+                'payload' => ['ref' => 'refs/heads/main', 'size' => 4, 'commits' => [
+                    ['sha' => 'f1', 'message' => 'Post approved editions to Telegram channels', 'distinct' => true],
+                    ['sha' => 'r1', 'message' => "Document Reddit's bot-account requirement", 'distinct' => true],
+                    ['sha' => 'c1', 'message' => 'Quote .env values containing spaces', 'distinct' => true],
+                    ['sha' => 't1', 'message' => 'Cover the Telegram publisher', 'distinct' => true],
+                ]]],
+            ['type' => 'IssuesEvent', 'public' => true, 'created_at' => '2026-09-27T17:00:00Z', 'repo' => ['name' => $self],
+                'payload' => ['action' => 'opened', 'issue' => ['number' => 3, 'title' => 'Typo in README']]],
+            ['type' => 'ReleaseEvent', 'public' => true, 'created_at' => '2026-09-27T16:00:00Z', 'repo' => ['name' => $self],
+                'payload' => ['action' => 'published', 'release' => ['name' => 'v1.1.0']]],
+        ];
+        $http = self::fakeHttp([
+            '/commits/f1' => ['files' => [['filename' => 'src/Newsletter/TelegramPublisher.php'], ['filename' => 'README.md']]],
+            '/commits/c1' => ['files' => [['filename' => 'env.example'], ['filename' => 'README.md']]],
+            '/commits/t1' => ['files' => [['filename' => 'tests/TelegramPublisherTest.php']]],
+            '/events' => $events,
+            '/search/commits' => ['items' => [
+                ['sha' => 'f2', 'commit' => ['message' => 'Read the earlier editions before writing', 'author' => ['date' => '2026-09-27T19:00:00Z']], 'repository' => ['full_name' => $self, 'private' => false]],
+            ]],
+            '/commits/f2' => ['files' => [['filename' => 'src/Newsletter/Writer.php']]],
+        ], $log);
+
+        $report = self::settle((new GitHubSource($http, 'valzargaming', selfRepo: $self))->collect($this->window()));
+
+        $this->assertSame([
+            "[{$self}, this newsletter's own bot] pushed 1 commit to main: Post approved editions to Telegram channels",
+            "[{$self}, this newsletter's own bot] commits: Read the earlier editions before writing (f2)",
+        ], $report->highlights);
+        $this->assertSame(2, $report->stats['commits']);
+        $this->assertEmpty(array_filter($log, static fn($u) => str_contains($u, '/commits/r1')), 'a routine message needs no lookup');
+    }
+
+    public function testTellsRoutineCommitsAndSourceFilesApart(): void
+    {
+        foreach (['docs: explain the window', 'chore(deps): bump guzzle', 'Merge branch main', 'Document the Reddit setup', 'Fix typos in the README', 'Apply php-cs-fixer', 'Update the tests', 'Add tests for the writer'] as $routine) {
+            $this->assertTrue(GitHubSource::isRoutine($routine), $routine);
+        }
+        foreach (['feat: post to Telegram', 'Fix the relay', 'Skip the newsletter channel when recording'] as $work) {
+            $this->assertFalse(GitHubSource::isRoutine($work), $work);
+        }
+        foreach (['src/Newsletter/Writer.php', 'bot.php', 'devvit/src/main.ts'] as $source) {
+            $this->assertTrue(GitHubSource::isSourceFile($source), $source);
+        }
+        foreach (['tests/WriterTest.php', 'README.md', 'env.example', '.php-cs-fixer.dist.php', '.github/workflows/ci.yml', 'composer.lock', 'devvit/src/main.test.ts'] as $other) {
+            $this->assertFalse(GitHubSource::isSourceFile($other), $other);
+        }
+    }
+
     public function testCollectReportsApiFailuresAsErrors(): void
     {
         $http = self::fakeHttp(['/events' => [401, '{"message":"Bad credentials"}'], '/search/commits' => ['items' => []]]);

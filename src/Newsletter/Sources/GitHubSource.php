@@ -14,6 +14,7 @@ declare(strict_types=1);
 namespace Newsletter\Sources;
 
 use Newsletter\Http\JsonClient;
+use Newsletter\SitePublisher;
 use Newsletter\Window;
 use React\Promise\PromiseInterface;
 
@@ -28,8 +29,17 @@ use function React\Promise\resolve;
  * Private-repository activity is dropped unless `$includePrivate` is set, so a
  * token with private scope cannot leak private repo names into a public post.
  *
+ * The newsletter's own traces are not the owner's work, so they are left out:
+ *  - the commits {@see SitePublisher} makes to publish an edition, and pushes
+ *    to a publish target's branch whose commits are unknown;
+ *  - everything in the newsletter bot's own repository (`$selfRepo`) except
+ *    commits that change what the bot does: a commit is kept only when its
+ *    message is not routine (docs, formatting, tests, merges…) and it changes
+ *    a source file outside the tests ({@see functionalCommits()}).
+ *
  * @link https://docs.github.com/en/rest/activity/events#list-events-for-the-authenticated-user
  * @link https://docs.github.com/en/rest/search/search#search-commits
+ * @link https://docs.github.com/en/rest/commits/commits#get-a-commit
  *
  * @since 1.0.0
  */
@@ -43,14 +53,26 @@ final class GitHubSource implements Source
     /** Cap on the extra requests {@see enrich()} makes for one window. */
     private const MAX_ENRICH_REQUESTS = 40;
 
+    /** Cap on the commit lookups {@see functionalCommits()} makes for one window. */
+    private const MAX_SELF_LOOKUPS = 20;
+
     /** A push that created its branch has no "before" commit to compare with. */
     private const NULL_SHA = '0000000000000000000000000000000000000000';
 
+    /** What `$selfRepo` lines are labelled with, so the writer knows what they are. */
+    public const SELF_LABEL = "this newsletter's own bot";
+
+    /**
+     * @param ?string                                   $selfRepo       `owner/repo` of the newsletter bot itself.
+     * @param list<array{repo: string, branch: string}> $publishTargets Where {@see SitePublisher} commits editions.
+     */
     public function __construct(
         private readonly JsonClient $http,
         private readonly string $username,
         private readonly ?string $token = null,
         private readonly bool $includePrivate = false,
+        private readonly ?string $selfRepo = null,
+        private readonly array $publishTargets = [],
     ) {}
 
     public function name(): string
@@ -75,52 +97,83 @@ final class GitHubSource implements Source
                 return [];
             });
 
-        return all([$events, $commits])->then(function (array $results) use ($window, &$errors): SourceReport {
-            [$events, $commits] = $results;
+        return all([$events, $commits])
+            ->then(function (array $results) use ($window): PromiseInterface {
+                [$events, $commits] = $results;
 
-            return $this->report($window, $events, $commits, $errors);
-        });
+                return $this->functionalCommits($window, $events, $commits)
+                    ->then(static fn(array $functional): array => [$events, $commits, $functional]);
+            })
+            ->then(function (array $results) use ($window, &$errors): SourceReport {
+                [$events, $commits, $functional] = $results;
+
+                return $this->report($window, $events, $commits, $errors, $functional);
+            });
     }
 
     /**
      * Builds the report from already-fetched API payloads. Public so it can be
      * tested without a transport.
      *
-     * @param list<array<string, mixed>> $events  Raw `/users/{u}/events` items.
-     * @param list<array<string, mixed>> $commits Raw `/search/commits` items.
+     * @param list<array<string, mixed>> $events     Raw `/users/{u}/events` items.
+     * @param list<array<string, mixed>> $commits    Raw `/search/commits` items.
      * @param list<string>               $errors
+     * @param array<string, true>        $functional Commits of `$selfRepo` that change what the bot does,
+     *                                               by sha ({@see functionalCommits()}); its others are left out.
      */
-    public function report(Window $window, array $events, array $commits, array $errors = []): SourceReport
+    public function report(Window $window, array $events, array $commits, array $errors = [], array $functional = []): SourceReport
     {
         $highlights = [];
         $stats = ['commits' => 0, 'pull_requests_opened' => 0, 'pull_requests_merged' => 0, 'issues_opened' => 0, 'issues_closed' => 0, 'reviews' => 0, 'comments' => 0];
         $repos = [];
         $seenShas = [];
+        $keptShas = [];
 
         foreach (array_reverse($events) as $event) { // oldest first reads like a story
             if (! $this->keep($window, $event['created_at'] ?? null, (bool) ($event['public'] ?? true))) {
                 continue;
             }
             $repo = (string) ($event['repo']['name'] ?? 'unknown repo');
+            $type = (string) ($event['type'] ?? '');
+            if ($type !== 'PushEvent' && $this->isSelf($repo)) {
+                continue; // of the bot's own repository, only its functional changes are news
+            }
             $payload = (array) ($event['payload'] ?? []);
             $line = null;
 
-            switch ($event['type'] ?? '') {
+            switch ($type) {
                 case 'PushEvent':
-                    $branch = preg_replace('#^refs/heads/#', '', (string) ($payload['ref'] ?? ''));
+                    $branch = (string) preg_replace('#^refs/heads/#', '', (string) ($payload['ref'] ?? ''));
+                    $listed = (array) ($payload['commits'] ?? []);
+                    if ($listed === [] && ($this->isSelf($repo) || $this->isPublishTarget($repo, $branch))) {
+                        break; // no way to tell the bot's own commits from real work; the commit search still finds the latter
+                    }
                     $pushed = [];
-                    foreach ((array) ($payload['commits'] ?? []) as $commit) {
-                        if (isset($commit['sha'])) {
-                            $seenShas[$commit['sha']] = true;
+                    $dropped = 0;
+                    foreach ($listed as $commit) {
+                        $sha = (string) ($commit['sha'] ?? '');
+                        $message = (string) ($commit['message'] ?? '');
+                        if ($sha !== '') {
+                            $seenShas[$sha] = true;
+                        }
+                        if (! $this->isWork($repo, $sha, $message, $functional)) {
+                            $dropped++;
+                            continue;
+                        }
+                        if ($sha !== '') {
+                            $keptShas[$sha] = true;
                         }
                         if (($commit['distinct'] ?? true) && isset($commit['message'])) {
-                            $pushed[] = self::firstLine((string) $commit['message']);
+                            $pushed[] = self::firstLine($message);
                         }
                     }
-                    $count = (int) ($payload['distinct_size'] ?? $payload['size'] ?? count($pushed));
+                    $count = $dropped > 0 ? count($pushed) : (int) ($payload['distinct_size'] ?? $payload['size'] ?? count($pushed));
+                    if ($dropped > 0 && $count === 0) {
+                        break; // nothing in it was the owner's work
+                    }
                     $stats['commits'] += $count;
                     $line = $count > 0
-                        ? "[{$repo}] pushed {$count} commit" . ($count === 1 ? '' : 's') . " to {$branch}" . ($pushed ? ': ' . implode('; ', array_slice($pushed, 0, 8)) : '')
+                        ? $this->label($repo) . " pushed {$count} commit" . ($count === 1 ? '' : 's') . " to {$branch}" . ($pushed ? ': ' . implode('; ', array_slice($pushed, 0, 8)) : '')
                         : "[{$repo}] pushed to {$branch}";
                     break;
 
@@ -220,15 +273,19 @@ final class GitHubSource implements Source
                 continue;
             }
             $repo = (string) ($item['repository']['full_name'] ?? 'unknown repo');
-            $extra[$repo][] = self::firstLine((string) ($item['commit']['message'] ?? '')) . ' (' . substr($sha, 0, 7) . ')';
+            $message = (string) ($item['commit']['message'] ?? '');
+            if (! $this->isWork($repo, $sha, $message, $functional)) {
+                continue;
+            }
+            $extra[$repo][] = self::firstLine($message) . ' (' . substr($sha, 0, 7) . ')';
             $repos[$repo] = true;
         }
         foreach ($extra as $repo => $messages) {
-            $highlights[] = "[{$repo}] commits: " . implode('; ', array_slice($messages, 0, 10)) . (count($messages) > 10 ? '; …' : '');
+            $highlights[] = $this->label($repo) . ' commits: ' . implode('; ', array_slice($messages, 0, 10)) . (count($messages) > 10 ? '; …' : '');
         }
         // A push whose payload carries no commit list still counted its size, and the
         // search may have found those same commits: take whichever count is larger.
-        $stats['commits'] = max($stats['commits'], count($seenShas) + array_sum(array_map('count', $extra)));
+        $stats['commits'] = max($stats['commits'], count($keptShas) + array_sum(array_map('count', $extra)));
 
         $stats = ['repositories' => count($repos)] + array_filter($stats);
 
@@ -337,6 +394,129 @@ final class GitHubSource implements Source
         }
 
         return $own;
+    }
+
+    /**
+     * Which of the window's commits to the newsletter bot's own repository change
+     * what it does: a message that is not routine, and a changed source file
+     * outside the tests (a lookup per commit, which the events and search lack).
+     * A commit whose lookup fails, or that is past the cap, is left out.
+     *
+     * @param list<array<string, mixed>> $events  Raw (enriched) events.
+     * @param list<array<string, mixed>> $commits Raw `/search/commits` items.
+     *
+     * @return PromiseInterface<array<string, true>> By sha.
+     */
+    public function functionalCommits(Window $window, array $events, array $commits): PromiseInterface
+    {
+        if ($this->selfRepo === null) {
+            return resolve([]);
+        }
+
+        $candidates = []; // sha => true
+        foreach ($events as $event) {
+            if (($event['type'] ?? '') !== 'PushEvent' || ! $this->isSelf((string) ($event['repo']['name'] ?? ''))
+                || ! $this->keep($window, $event['created_at'] ?? null, (bool) ($event['public'] ?? true))) {
+                continue;
+            }
+            foreach ((array) ($event['payload']['commits'] ?? []) as $commit) {
+                if (isset($commit['sha']) && ! self::isRoutine((string) ($commit['message'] ?? ''))) {
+                    $candidates[(string) $commit['sha']] = true;
+                }
+            }
+        }
+        foreach ($commits as $item) {
+            if (isset($item['sha']) && $this->isSelf((string) ($item['repository']['full_name'] ?? ''))
+                && $this->keep($window, $item['commit']['author']['date'] ?? null, ! ($item['repository']['private'] ?? false))
+                && ! self::isRoutine((string) ($item['commit']['message'] ?? ''))) {
+                $candidates[(string) $item['sha']] = true;
+            }
+        }
+
+        $functional = [];
+        $lookups = [];
+        foreach (array_slice(array_keys($candidates), 0, self::MAX_SELF_LOOKUPS) as $sha) {
+            $lookups[] = $this->http->get(self::API . "/repos/{$this->selfRepo}/commits/" . rawurlencode((string) $sha), $this->headers())->then(
+                static function (array $body) use (&$functional, $sha): void {
+                    foreach ((array) ($body['files'] ?? []) as $file) {
+                        if (self::isSourceFile((string) ($file['filename'] ?? ''))) {
+                            $functional[(string) $sha] = true;
+
+                            return;
+                        }
+                    }
+                },
+                static fn() => null,
+            );
+        }
+
+        return all($lookups)->then(function () use (&$functional): array {
+            return $functional;
+        });
+    }
+
+    /**
+     * Whether a commit is the owner's work for the newsletter: never one of the
+     * publisher's own commits, and in the bot's repository only a functional one.
+     *
+     * @param array<string, true> $functional
+     */
+    private function isWork(string $repo, string $sha, string $message, array $functional): bool
+    {
+        if (SitePublisher::isPublishCommit($message)) {
+            return false;
+        }
+
+        return ! $this->isSelf($repo) || (! self::isRoutine($message) && isset($functional[$sha]));
+    }
+
+    /**
+     * A commit that does not change what the code does, judged by its message:
+     * merges, reverts of merges, docs, formatting, tests, typos, version bumps,
+     * and conventional-commit types other than feat/fix/perf.
+     */
+    public static function isRoutine(string $message): bool
+    {
+        $first = trim((string) strtok(ltrim($message), "\n"));
+
+        return $first === ''
+            || (bool) preg_match('/^(docs?|chore|style|tests?|ci|build|refactor)(\([^)]*\))?!?:/i', $first)
+            || (bool) preg_match('/^(merge|wip\b|bump|document|format|reformat|lint|typo|fix(es)? (a |the )?typos?|apply (php-cs-fixer|pint|cs fixes?|formatting)|update (the )?(readme|docs?|changelog|comments?))/i', $first)
+            || (bool) preg_match('/^(add|update|fix|improve|expand)( the)? (tests?|docs?|documentation|readme|comments?|docblocks?)\b/i', $first);
+    }
+
+    /** A file whose change can change what the bot does: source code outside the tests. */
+    public static function isSourceFile(string $path): bool
+    {
+        $path = strtolower($path);
+        if (preg_match('#(^|/)(tests?|docs?|\.github|vendor|node_modules)/#', $path) || preg_match('#(^|/)\.[^/]+$#', $path)) {
+            return false;
+        }
+
+        return (bool) preg_match('/\.(php|js|mjs|cjs|jsx|ts|tsx|py|sh|ps1|go|rs)$/', $path)
+            && ! preg_match('/(test|spec)\.\w+$/', $path);
+    }
+
+    private function isSelf(string $repo): bool
+    {
+        return $this->selfRepo !== null && strcasecmp($repo, $this->selfRepo) === 0;
+    }
+
+    private function isPublishTarget(string $repo, string $branch): bool
+    {
+        foreach ($this->publishTargets as $target) {
+            if (strcasecmp($repo, $target['repo']) === 0 && $branch === $target['branch']) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** `[owner/repo]`, saying when it is the newsletter bot itself. */
+    private function label(string $repo): string
+    {
+        return $this->isSelf($repo) ? "[{$repo}, " . self::SELF_LABEL . ']' : "[{$repo}]";
     }
 
     /**

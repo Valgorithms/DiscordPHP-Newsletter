@@ -31,6 +31,9 @@ final class StateStore
     public const STATUS_POSTED = 'posted';
     public const STATUS_REJECTED = 'rejected';
 
+    /** How many published editions {@see recordPublished()} keeps. */
+    public const PUBLISHED_KEPT = 30;
+
     /** @var array<string, mixed> */
     private array $data = [];
 
@@ -143,6 +146,88 @@ final class StateStore
         $cutoff = date(DATE_ATOM, time() - $days * 86400);
         $editions = array_filter((array) $this->get('editions', []), static fn($e) => ($e['created_at'] ?? '') >= $cutoff);
         $this->set('editions', $editions);
+    }
+
+    // --- published editions -------------------------------------------------------
+
+    /**
+     * Remembers what an edition said once it is published, for the writer to
+     * read before the next one. Kept apart from `editions`, which are pruned
+     * after 30 days, and capped at the newest {@see self::PUBLISHED_KEPT}.
+     *
+     * @param array<string, mixed> $edition A posted edition.
+     */
+    public function recordPublished(array $edition): void
+    {
+        $published = array_values(array_filter(
+            (array) $this->get('published', []),
+            static fn($p) => is_array($p) && ($p['key'] ?? null) !== $edition['key'],
+        ));
+        $published[] = self::publishedEntry($edition);
+        usort($published, self::newestFirst(...));
+        $this->set('published', array_slice($published, 0, self::PUBLISHED_KEPT));
+    }
+
+    /**
+     * The newest published editions, newest first: what readers have already
+     * seen. Editions posted before {@see recordPublished()} existed are read
+     * from `editions`.
+     *
+     * @return list<array{key: string, date: string, headline: string, markdown: string, posted_at: string}>
+     */
+    public function publishedEditions(int $limit, ?string $exceptKey = null): array
+    {
+        if ($limit <= 0) {
+            return [];
+        }
+        $byKey = [];
+        foreach ((array) $this->get('editions', []) as $edition) {
+            if (is_array($edition) && ($edition['status'] ?? null) === self::STATUS_POSTED && isset($edition['key'], $edition['draft'])) {
+                $byKey[$edition['key']] = self::publishedEntry($edition);
+            }
+        }
+        foreach ((array) $this->get('published', []) as $entry) {
+            if (is_array($entry) && isset($entry['key'])) {
+                $byKey[$entry['key']] = $entry;
+            }
+        }
+        unset($byKey[$exceptKey ?? '']);
+        $published = array_values($byKey);
+        usort($published, self::newestFirst(...));
+
+        return array_slice($published, 0, $limit);
+    }
+
+    /**
+     * @param array<string, mixed> $edition
+     *
+     * @return array{key: string, date: string, headline: string, markdown: string, posted_at: string}
+     */
+    private static function publishedEntry(array $edition): array
+    {
+        $draft = Draft::fromArray((array) $edition['draft']);
+        try {
+            $date = Window::fromArray((array) $edition['window'])->label();
+        } catch (\Throwable) {
+            $date = (string) $edition['key'];
+        }
+
+        return [
+            'key' => (string) $edition['key'],
+            'date' => $date,
+            'headline' => $draft->headline,
+            'markdown' => $draft->toMarkdown(),
+            'posted_at' => (string) ($edition['posted_at'] ?? $edition['updated_at'] ?? $edition['created_at'] ?? ''),
+        ];
+    }
+
+    /**
+     * @param array<string, mixed> $a
+     * @param array<string, mixed> $b
+     */
+    private static function newestFirst(array $a, array $b): int
+    {
+        return strcmp((string) ($b['posted_at'] ?? ''), (string) ($a['posted_at'] ?? ''));
     }
 
     // --- window ----------------------------------------------------------------

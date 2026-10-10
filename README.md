@@ -37,6 +37,13 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
   community PRs on command handling"), then writes a few paragraphs about what the day's work was about and why it
   mattered. It names at most a couple of highlights, never every PR or commit. It writes Markdown rather than JSON,
   which local models handle far more reliably.
+- **Only your work, never its own.** The commits that publish an edition to the websites, and anything said in the
+  newsletter channel, are not reported as your work. From the bot's own repository (`NEWSLETTER_REPO`) only commits
+  that change what it does are reported: a commit whose message is not routine (docs, formatting, tests, merges) and
+  that changes source code outside the tests.
+- **It remembers what it already said.** Before writing, the model reads the last few published editions
+  (`NEWSLETTER_HISTORY`, 5 by default). It avoids their headlines and phrasing, does not announce the same update
+  twice, and presents more work on something already reported as progress on it.
 - **If Ollama is down**, you still get the raw activity list so a day is never lost. The DM says the model didn't
   write it and why, and `!rewrite` asks the model again once it's back. `bot.php` and `preview.php` check at startup
   that Ollama answers and has your model, and say exactly what to fix if not.

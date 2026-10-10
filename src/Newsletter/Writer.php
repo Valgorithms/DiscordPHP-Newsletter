@@ -14,6 +14,7 @@ declare(strict_types=1);
 namespace Newsletter;
 
 use Newsletter\Llm\OllamaClient;
+use Newsletter\Sources\GitHubSource;
 use Newsletter\Sources\SourceReport;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
@@ -30,6 +31,11 @@ use function React\Promise\resolve;
  *  2. {@see compose()} — write the newsletter from all notes, as Markdown prose;
  *  3. {@see review()}  — fact-check the draft against the notes and fix it;
  *  4. {@see revise()}  — apply the owner's requested edits, later, on demand.
+ *
+ * Compose, review and revise also read the editions published before (newest
+ * first, as {@see StateStore::publishedEditions()} returns them), so a new one
+ * neither repeats their wording nor announces again what they reported, and
+ * can tell readers how today's work builds on theirs.
  *
  * Replies are plain Markdown ({@see Draft::fromMarkdown()}), not JSON: local
  * models write prose far more reliably than they fill in a schema, and some
@@ -68,11 +74,12 @@ final class Writer
      * fact-checked) draft. `fallback` is why the model could not write it, when
      * the draft is the deterministic template instead; otherwise null.
      *
-     * @param list<SourceReport> $reports
+     * @param list<SourceReport>         $reports
+     * @param list<array<string, mixed>> $previous Published editions, newest first.
      *
      * @return PromiseInterface<array{draft: Draft, notes: array<string, string>, fallback: ?string}>
      */
-    public function write(Window $window, array $reports): PromiseInterface
+    public function write(Window $window, array $reports, array $previous = []): PromiseInterface
     {
         $notes = [];
         $chain = resolve(null);
@@ -89,15 +96,15 @@ final class Writer
         }
 
         return $chain
-            ->then(function () use ($window, $reports, &$notes): PromiseInterface {
-                return $this->compose($window, $reports, $notes);
+            ->then(function () use ($window, $reports, &$notes, $previous): PromiseInterface {
+                return $this->compose($window, $reports, $notes, $previous);
             })
-            ->then(function (array $composed) use (&$notes): PromiseInterface {
+            ->then(function (array $composed) use (&$notes, $previous): PromiseInterface {
                 if ($composed['fallback'] !== null || ! $this->factCheck || $notes === []) {
                     return resolve($composed);
                 }
 
-                return $this->review($composed['draft'], $notes)
+                return $this->review($composed['draft'], $notes, $previous)
                     ->then(static fn(Draft $draft): array => ['draft' => $draft, 'fallback' => null]);
             })
             ->then(function (array $composed) use (&$notes): array {
@@ -127,6 +134,9 @@ final class Writer
                   sent back for changes, still in progress), using the titles and commit messages to understand it;
                 - keep the names that matter (projects, servers, games) and at most a few PR numbers for the biggest items;
                 - skip routine noise (branch creation, single stars, one-off chatter) unless nothing else happened;
+                - the newsletter itself being written, posted or published is not work: never mention it;
+                - lines marked "{$this->selfLabel()}" are changes to the bot that writes this newsletter: describe only what
+                  it now does differently for readers, never how it was built;
                 - never add anything that is not in the log.
 
                 {$facts}
@@ -145,12 +155,13 @@ final class Writer
      * Writes the newsletter from the notes. Retries once with the problem fed
      * back; after that, falls back to {@see fallback()} and says why.
      *
-     * @param list<SourceReport>    $reports
-     * @param array<string, string> $notes   Keyed by source name.
+     * @param list<SourceReport>         $reports
+     * @param array<string, string>      $notes    Keyed by source name.
+     * @param list<array<string, mixed>> $previous Published editions, newest first.
      *
      * @return PromiseInterface<array{draft: Draft, fallback: ?string}>
      */
-    public function compose(Window $window, array $reports, array $notes): PromiseInterface
+    public function compose(Window $window, array $reports, array $notes, array $previous = []): PromiseInterface
     {
         if ($notes === []) {
             return resolve(['draft' => self::quietDay($window, $this->author), 'fallback' => null]);
@@ -162,7 +173,7 @@ final class Writer
         $messages = [
             ['role' => 'system', 'content' => $this->systemPrompt()],
             ['role' => 'user', 'content' => <<<PROMPT
-                Write the newsletter for {$window->label()} from these notes.
+                {$this->history($previous)}Write the newsletter for {$window->label()} from these notes.
 
                 {$body}
 
@@ -184,11 +195,12 @@ final class Writer
      * Fact-checks `$draft` against the notes and returns a corrected draft. Any
      * failure keeps the original: a missed check is better than a lost draft.
      *
-     * @param array<string, string> $notes
+     * @param array<string, string>      $notes
+     * @param list<array<string, mixed>> $previous Published editions, newest first.
      *
      * @return PromiseInterface<Draft>
      */
-    public function review(Draft $draft, array $notes): PromiseInterface
+    public function review(Draft $draft, array $notes, array $previous = []): PromiseInterface
     {
         $facts = implode("\n\n", array_map(static fn($source, $text) => "## {$source}\n{$text}", array_keys($notes), $notes));
         $this->logger->info('Asking the model to fact-check the draft…');
@@ -196,7 +208,7 @@ final class Writer
         return $this->draftFrom([
             ['role' => 'system', 'content' => 'You are a careful fact-checking editor. You only change what is wrong.'],
             ['role' => 'user', 'content' => <<<PROMPT
-                Here are the only facts that are true:
+                {$this->history($previous, false)}Here are the only facts that are true about today:
 
                 {$facts}
 
@@ -205,7 +217,9 @@ final class Writer
                 {$draft->toMarkdown()}
 
                 Check every claim in the draft against the facts. Remove or correct anything that is not supported (invented
-                numbers, features, outcomes, people or opinions attributed to others). Keep the tone, structure and length otherwise.
+                numbers, features, outcomes, people or opinions attributed to others). A mention of what an earlier edition
+                reported is supported when that edition says it, but it must not be presented as today's work. Remove any
+                mention of the newsletter itself being written, posted or published. Keep the tone, structure and length otherwise.
                 Reply with ONLY the corrected newsletter, in exactly the same Markdown format.
                 PROMPT],
         ], 0.1, false)->then(null, function (\Throwable $e) use ($draft): Draft {
@@ -218,18 +232,19 @@ final class Writer
     /**
      * Applies the owner's requested edits to `$draft`.
      *
-     * @param array<string, string> $notes The facts the edition was written from.
+     * @param array<string, string>      $notes    The facts the edition was written from.
+     * @param list<array<string, mixed>> $previous Published editions, newest first.
      *
      * @return PromiseInterface<Draft> Rejects when the model cannot produce a valid draft.
      */
-    public function revise(Draft $draft, string $instructions, array $notes): PromiseInterface
+    public function revise(Draft $draft, string $instructions, array $notes, array $previous = []): PromiseInterface
     {
         $facts = implode("\n\n", array_map(static fn($source, $text) => "## {$source}\n{$text}", array_keys($notes), $notes)) ?: '(no facts recorded)';
 
         return $this->draftFrom([
             ['role' => 'system', 'content' => $this->systemPrompt()],
             ['role' => 'user', 'content' => <<<PROMPT
-                The facts this newsletter was written from:
+                {$this->history($previous)}The facts this newsletter was written from:
 
                 {$facts}
 
@@ -312,6 +327,67 @@ final class Writer
         );
     }
 
+    /** Longest part of one earlier edition the prompts quote, in characters. */
+    private const HISTORY_CHARS = 1500;
+
+    /**
+     * The earlier editions, with how to use them, to put at the top of a prompt;
+     * empty when there are none. The writer is told to avoid their wording; the
+     * fact-checker (`$writing` false) only needs them to tell references apart.
+     *
+     * @param list<array<string, mixed>> $previous Published editions, newest first.
+     */
+    private function history(array $previous, bool $writing = true): string
+    {
+        if ($previous === []) {
+            return '';
+        }
+        $editions = implode("\n\n", array_map(static function (array $p): string {
+            $text = trim((string) ($p['markdown'] ?? ''));
+            $text = mb_strlen($text) > self::HISTORY_CHARS ? mb_substr($text, 0, self::HISTORY_CHARS - 1) . '…' : $text;
+            // Demote their headings so they cannot be mistaken for the reply's format.
+            $text = (string) preg_replace(['/^#\s+(.+)$/m', '/^#+\s*/m'], ['Headline: $1', ''], $text);
+
+            return '=== Published ' . ($p['date'] ?? $p['key'] ?? 'earlier') . " ===\n{$text}";
+        }, $previous));
+
+        if (! $writing) {
+            return <<<HISTORY
+                Earlier editions, already published (newest first):
+
+                {$editions}
+
+                =================
+
+
+                HISTORY;
+        }
+
+        return <<<HISTORY
+            Earlier editions, already published (newest first). Readers have already read these:
+
+            {$editions}
+
+            =================
+
+            How to use the earlier editions:
+            - Do not reuse their headlines, openings, sign-offs or distinctive phrases. Say things in new words.
+            - Do not announce again anything they already reported. When today's notes show more work on the same thing,
+              write only about what is new and present it as progress on it ("the namespace clean-up I started on Monday
+              is now finished").
+            - Where it helps readers, tie today's work to the progress so far (how far a project has come, what it is
+              building towards).
+            - They are context, not today's facts: never present anything from them as done today.
+
+
+            HISTORY;
+    }
+
+    private function selfLabel(): string
+    {
+        return GitHubSource::SELF_LABEL;
+    }
+
     /** The reply format shared by compose and revise, which {@see Draft::fromMarkdown()} reads. */
     private function format(): string
     {
@@ -344,7 +420,9 @@ final class Writer
               Never go through pull requests, commits or messages one by one; mention at most two or three by name or
               number when they were the day's highlights (refer to them as owner/repo#123).
             - Use only the facts you are given. Never invent numbers, features, results, quotes or people.
-            - Leave out anything that happened but does not matter to a reader.
+            - Leave out anything that happened but does not matter to a reader, and never report this newsletter itself
+              being written, posted or published as work. Changes to the bot that writes it are news only when they
+              change what it does.
             - Discord markdown is fine for emphasis (**bold**, *italics*, `code`). No tables, no HTML, no @everyone/@here, no emoji spam.
             - About {$this->words} words in total. The headline is short and specific to today, never just "Daily recap".{$style}
             PROMPT;

@@ -37,6 +37,13 @@ final class SitePublisher
 {
     private const API = 'https://api.github.com';
 
+    /**
+     * How every commit this publisher makes starts: `Newsletter: {date} — {headline}`.
+     * {@see isPublishCommit()} recognises them, so the next edition does not
+     * report its own publishing as the owner's work.
+     */
+    public const COMMIT_PREFIX = 'Newsletter: ';
+
     private readonly LoggerInterface $logger;
 
     /** @var callable(string): ?string */
@@ -115,6 +122,18 @@ final class SitePublisher
         return $chain->then(function () use (&$problems): array {
             return $problems;
         });
+    }
+
+    /** Whether `$message` is one of this publisher's commits. */
+    public static function isPublishCommit(string $message): bool
+    {
+        return (bool) preg_match('/^' . preg_quote(self::COMMIT_PREFIX, '/') . '\d{4}-\d{2}-\d{2}\b/', ltrim($message));
+    }
+
+    /** @return list<array{repo: string, branch: string, path: string}> */
+    public function targets(): array
+    {
+        return $this->targets;
     }
 
     /** @return list<string> `owner/repo` of each target, for messages. */
@@ -242,7 +261,7 @@ final class SitePublisher
                 [$doc, $sha] = $current;
                 $json = json_encode(self::upsert(is_array($doc) ? $doc : [], $entry), JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE | JSON_THROW_ON_ERROR) . "\n";
                 $payload = [
-                    'message' => "Newsletter: {$entry['date']} — {$entry['headline']}",
+                    'message' => self::COMMIT_PREFIX . "{$entry['date']} — {$entry['headline']}",
                     'content' => base64_encode($json),
                     'branch' => $target['branch'],
                 ];

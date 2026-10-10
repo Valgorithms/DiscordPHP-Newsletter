@@ -30,6 +30,12 @@ use React\Promise\PromiseInterface;
  */
 final class Services
 {
+    /** The newsletter bot's own repository, unless NEWSLETTER_REPO names a fork. */
+    public const SELF_REPO = 'Valgorithms/DiscordPHP-Newsletter';
+
+    /** How many published editions the writer is shown, unless NEWSLETTER_HISTORY says otherwise. */
+    public const HISTORY = 5;
+
     public static function timezone(): \DateTimeZone
     {
         return new \DateTimeZone(Env::string('NEWSLETTER_TIMEZONE') ?? date_default_timezone_get());
@@ -106,7 +112,19 @@ final class Services
         $sources = [];
 
         if ($user = Env::string('GITHUB_USERNAME')) {
-            $sources[] = new GitHubSource($http, $user, Env::string('GITHUB_TOKEN'), Env::flag('GITHUB_INCLUDE_PRIVATE', false));
+            try {
+                $publishTargets = SitePublisher::parseTargets(Env::string('PUBLISH_TARGETS') ?? '');
+            } catch (\InvalidArgumentException) {
+                $publishTargets = []; // reported where the publisher is built
+            }
+            $sources[] = new GitHubSource(
+                $http,
+                $user,
+                Env::string('GITHUB_TOKEN'),
+                Env::flag('GITHUB_INCLUDE_PRIVATE', false),
+                Env::string('NEWSLETTER_REPO') ?? self::SELF_REPO,
+                $publishTargets,
+            );
         } else {
             $logger->notice('GITHUB_USERNAME is not set; GitHub activity is skipped.');
         }
