@@ -190,3 +190,29 @@ synthetic activity and a previous-edition fixture, reads no .env or bot state, a
 Its output includes a checklist for manually assessing accuracy, new progress, duplicate coverage and tone.
 This is an opt-in generation test, separate from composer unit; it does not establish that every future
 model reply will follow the prompts. Loopback/private IPv4 endpoints are required.
+
+
+### Open Collective supporter drafts
+
+Set OPENCOLLECTIVE_COLLECTIVE=discordphp and OPENCOLLECTIVE_PERSONAL_TOKEN in your private .env to enable
+owner-only !collective [date] (the latest posted edition when no date is given). The local model adapts only
+that already-approved edition for DiscordPHP supporters, leaving unrelated gaming/projects out and keeping
+donation, expense and budget claims grounded in the selected text. It then reviews the result against that edition.
+
+The bot creates an unpublished update draft and returns its Open Collective link. Review/edit it there and
+explicitly choose publication and notification recipients. Normal newsletter approval and !publish do not create
+Open Collective updates. This adapter never calls publishUpdate or sends supporter emails.
+
+Use a personal token with updates scope belonging to a Collective admin/community manager. Never put it in
+website code, build variables or public files; financial scopes and advanced financial privileges are unnecessary.
+The GraphQL contract was verified against opencollective/opencollective-api revision
+6f588a91e70e1c7cea7ca326f2852af6d2384acf (UpdateMutations.js, UpdateCreateInput.js and common/update.ts).
+Draft creation is separate from publication:
+https://documentation.opencollective.com/advanced/keeping-your-community-updated/updates-and-contact
+
+Repeated commands return the saved draft instead of creating another, including after restart. Before creating
+a remote update the bot saves a creation_started marker and generated content. If the request result is lost or
+cannot be confirmed, it will not retry automatically. Inspect the collective for the possible draft first; after
+confirming no draft exists, an administrator can remove only that edition's collective_drafts.discordphp marker
+from backed-up bot state while the bot is stopped. If a draft exists, review it in Open Collective instead of
+resubmitting. No existing contributor updates are edited or deleted by this integration.
