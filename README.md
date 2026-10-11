@@ -240,3 +240,38 @@ source-based activity list and the approval message explains that the factual re
 Supporter-update creation stops when its factual review fails; retry after the model is available. GitHub feeds/search and Discord gateway observations are
 bounded sources, not a complete audit of all work. This does not establish inactivity outside the
 recorded evidence. No new environment settings are required for these measurement rules.
+
+### Bridge conversations and developer background
+
+The optional Bridge feed fills a deliberate gap: Discord webhook relays are otherwise
+ignored by the Discord recorder. It imports only the owner's own message text, matched
+by stable platform account ID in explicitly approved public rooms. It never matches a
+webhook display name, reads tokens or Bridge routing storage, or copies other people's
+quoted messages, attachments, or private rooms. Configure BridgeBot's export first,
+then set `NEWSLETTER_BRIDGE_FEED` to the same absolute JSON-file path in `env.example`.
+The file must be local/readable by the Newsletter process. No Bridge package dependency
+or extra Discord connection is needed. Both bots need a restart after configuration.
+
+The feed starts when enabled; Bridge does not retain an archive to backfill. Restart,
+stale heartbeat and capacity gaps are reported as partial coverage. Current excerpts
+replace edits and disappear on reported deletion/purge. Published editions retain their
+original evidence; deleting a message does not retroactively edit an approved post.
+Messages are bounded to 600 characters and 500 records/14 days in the exporter.
+The source shows at most 60 excerpts. Event time is Bridge observation time, not a
+claim about the original platform's delivery time. Existing-message edits are labelled
+as revisions; collection uses the same half-open published cutoff as other sources.
+Conversation is self-reported context, not independent proof that code shipped.
+
+For stable context, copy `developer-context.example.json` to an ignored file such as
+`var/developer-context.json`, review/add public project facts with `source_url` provenance,
+and set `NEWSLETTER_CONTEXT_FILE` to its absolute path. Include project purpose, public
+roles and terminology that help readers understand observed activity. Do not add secrets,
+private chats, guessed motivations or outdated promises. This file is operator-curated;
+URLs are provenance labels, not automatically fetched or verified. At most 40 facts of
+700 characters are used. Both local JSON readers reject files over 2 MB.
+
+Background is saved alongside each edition's original source reports so factual review
+and revisions use the same snapshot. It does not generate activity notes, create a
+section in deterministic drafts, or turn a quiet day into an announcement. The model
+may use it to explain a project with current activity, never to announce old work as new.
+All text remains data rather than prompt instructions; owner approval still gates posts.

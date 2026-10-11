@@ -36,6 +36,31 @@ final class WriterTest extends TestCase
         ];
     }
 
+    public function testBackgroundOnlyIsQuietAndNeverBecomesNewWork(): void
+    {
+        $context = new SourceReport('developer_context', 'Background', ['Bridge connects platforms.'], contextOnly: true);
+        $writer = new Writer($this->fakeLlm([]), 'Valithor');
+        $written = self::settle($writer->write($this->window(), [$context]));
+        self::assertSame([], $this->prompts);
+        self::assertSame([], $written['draft']->sections);
+        self::assertStringNotContainsString('Bridge', $written['draft']->toMarkdown());
+    }
+
+    public function testBackgroundReachesComposeReviewAndSavedEvidenceWithoutANotesPass(): void
+    {
+        $context = new SourceReport('developer_context', 'Background', ['Bridge connects platforms.'], contextOnly: true);
+        $writer = new Writer($this->fakeLlm(['notes', self::DRAFT, self::DRAFT]), 'Valithor');
+        $reports = [...$this->reports(), $context];
+        $written = self::settle($writer->write($this->window(), $reports));
+        self::assertCount(3, $this->prompts);
+        self::assertStringContainsString('BACKGROUND ONLY', $this->prompts[1]);
+        self::assertStringContainsString('Bridge connects platforms.', $this->prompts[2]);
+        self::assertArrayNotHasKey('developer_context', $written['notes']);
+        $writer = new Writer($this->fakeLlm([self::DRAFT]), 'Valithor');
+        self::settle($writer->revise($written['draft'], 'shorten', $written['notes'], [], $reports));
+        self::assertStringContainsString('BACKGROUND ONLY', $this->prompts[3]);
+    }
+
     public function testWriteRunsNotesComposeAndFactCheckInOrder(): void
     {
         $writer = new Writer($this->fakeLlm(['- Merged polls (#1400)', self::DRAFT, self::DRAFT]), 'Valithor');
