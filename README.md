@@ -216,3 +216,13 @@ cannot be confirmed, it will not retry automatically. Inspect the collective for
 confirming no draft exists, an administrator can remove only that edition's collective_drafts.discordphp marker
 from backed-up bot state while the bot is stopped. If a draft exists, review it in Open Collective instead of
 resubmitting. No existing contributor updates are edited or deleted by this integration.
+
+### Activity after an early post
+
+Manual and scheduled drafts exclude activity already covered by a posted edition. After an early
+post, the next collection starts at that edition's activity-window end, preserving work done between
+drafting and approval. The normal schedule is unchanged. Pending or rejected drafts do not advance
+this published cutoff; a pending draft that overlaps a newer post must be regenerated before approval.
+The cutoff survives restarts and pruning. Earlier newsletters remain writing context, so a follow-up
+may mention earlier work while identifying only newly collected progress as new work. An entirely
+covered window is declined rather than collected again. No additional environment settings are needed.
