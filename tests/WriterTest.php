@@ -81,11 +81,25 @@ final class WriterTest extends TestCase
         $this->assertSame([], $this->prompts);
     }
 
-    public function testFactCheckFailureKeepsTheDraft(): void
+    public function testFactCheckFailureFallsBackToOriginalSourcesAndWarnsTheOwner(): void
     {
-        $writer = new Writer($this->fakeLlm(['notes', self::DRAFT, 'garbage']), 'Valithor');
+        $invented = '{"headline":"Released version 99","intro":"I released version 99 with every API supported.","sections":[],"signoff":""}';
+        foreach (['garbage', new \RuntimeException('private transport diagnostic')] as $failure) {
+            $writer = new Writer($this->fakeLlm(['Invented notes', $invented, $failure]), 'Valithor');
+            $written = self::settle($writer->write($this->window(), $this->reports()));
+            $text = $written['draft']->toMarkdown();
+            self::assertStringNotContainsString('version 99', $text);
+            self::assertStringContainsString('merged pull request #1400', $text);
+            self::assertStringContainsString('factual review could not be completed', $written['fallback']);
+            self::assertStringNotContainsString('private transport diagnostic', $written['fallback']);
+        }
+    }
 
-        $this->assertSame('Polls land in DiscordPHP', self::settle($writer->write($this->window(), $this->reports()))['draft']->headline);
+    public function testSupporterReviewFailureRejectsInsteadOfReturningUncheckedContent(): void
+    {
+        $writer = new Writer($this->fakeLlm([self::DRAFT, new \RuntimeException('Review unavailable')]), 'Valithor');
+        $this->expectExceptionMessage('Review unavailable');
+        self::settle($writer->supporterUpdate(Draft::fromLlmJson(self::DRAFT)));
     }
 
     public function testReviseSendsTheInstructionsAndCurrentDraft(): void
