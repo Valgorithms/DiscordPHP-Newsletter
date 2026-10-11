@@ -135,6 +135,13 @@ final class Services
             $logger->notice('STEAM_API_KEY / STEAM_ID are not set; Steam activity is skipped.');
         }
 
+        if ($path = Env::string('NEWSLETTER_BRIDGE_FEED')) {
+            $sources[] = new Sources\BridgeSource(static fn(): PromiseInterface => Sources\LocalContextFile::read($path));
+        }
+        if ($path = Env::string('NEWSLETTER_CONTEXT_FILE')) {
+            $sources[] = new Sources\DeveloperContextSource(static fn(): PromiseInterface => Sources\LocalContextFile::read($path));
+        }
+
         return $sources;
     }
 

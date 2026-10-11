@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "facts": [
+    {
+      "statement": "DiscordPHP is a PHP library for interacting with Discord from a long-running bot process.",
+      "source_url": "https://github.com/discord-php/DiscordPHP"
+    },
+    {
+      "statement": "DiscordPHP-BridgeBot connects Discord with Twitch, Telegram and YouTube through platform connectors.",
+      "source_url": "https://github.com/Valgorithms/DiscordPHP-BridgeBot"
+    }
+  ]
+}
