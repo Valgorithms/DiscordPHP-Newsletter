@@ -226,3 +226,16 @@ this published cutoff; a pending draft that overlaps a newer post must be regene
 The cutoff survives restarts and pruning. Earlier newsletters remain writing context, so a follow-up
 may mention earlier work while identifying only newly collected progress as new work. An entirely
 covered window is declined rather than collected again. No additional environment settings are needed.
+
+### Source measurement limits
+
+Steam playtime is a difference between saved lifetime totals, not a session log. Missing per-game
+baselines are unknown and excluded, and historical editions never substitute current totals for a
+missing historical endpoint. Snapshot times can differ from the requested window; those periods are
+marked approximate/incomplete rather than asserted as exact daily totals. GitHub title enrichment
+preserves event-time status; a later merge cannot turn an earlier close into a merge event.
+
+The owner still reviews every draft. The local LLM fact-check is best effort: if it fails, the draft
+is retained and the failure is logged. GitHub feeds/search and Discord gateway observations are
+bounded sources, not a complete audit of all work. This does not establish inactivity outside the
+recorded evidence. No new environment settings are required for these measurement rules.

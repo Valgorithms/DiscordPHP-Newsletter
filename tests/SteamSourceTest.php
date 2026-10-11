@@ -28,7 +28,6 @@ final class SteamSourceTest extends TestCase
         $this->assertSame([
             '20' => ['minutes' => 90, 'name' => 'Terraria', 'lifetime' => 140],
             '10' => ['minutes' => 30, 'name' => 'Factorio', 'lifetime' => 130],
-            '30' => ['minutes' => 15, 'name' => 'New Game', 'lifetime' => 15],
         ], SteamSource::deltas($before, $after));
     }
 
@@ -52,11 +51,11 @@ final class SteamSourceTest extends TestCase
         $report = self::settle($source->collect($window));
 
         $this->assertSame([
-            'Played Factorio for 1h 25m (11h lifetime)',
+            'Played Factorio for about 1h 25m (11h lifetime)',
             'Unlocked achievement "Steam Age" in Factorio (Build a steam engine)',
         ], $report->highlights);
         $this->assertSame(['games_played' => 1, 'time_played' => '1h 25m', 'achievements' => 1], $report->stats);
-        $this->assertSame([], $report->errors);
+        $this->assertStringContainsString('approximate snapshot difference', $report->errors[0]);
     }
 
     public function testFirstRunExplainsThatThereIsNoBaselineYet(): void
@@ -71,6 +70,30 @@ final class SteamSourceTest extends TestCase
         $this->assertTrue($report->isEmpty());
         $this->assertStringContainsString('no earlier playtime snapshot', $report->errors[0]);
         $this->assertNotNull($snapshots->atOrBefore(new \DateTimeImmutable('2026-09-28T00:00:00Z')), 'the live fetch is recorded as a snapshot');
+    }
+
+    public function testPastWindowWithoutHistoricalEndpointNeverFetchesCurrentTotals(): void
+    {
+        $snapshots = new SteamSnapshots(new StateStore(self::tempFile('state')));
+        $snapshots->record(new \DateTimeImmutable('2026-09-26T00:00:00Z'), ['1' => [100, 'Game']]);
+        $source = new SteamSource(self::fakeHttp([], $log), 'key', 'id', $snapshots, static fn() => new \DateTimeImmutable('2026-09-29T00:00:00Z'));
+        $report = self::settle($source->collect(new Window(new \DateTimeImmutable('2026-09-27T00:00:00Z'), new \DateTimeImmutable('2026-09-28T00:00:00Z'))));
+        self::assertSame([], $log);
+        self::assertSame([], $report->highlights);
+        self::assertStringContainsString('No historical end snapshot', $report->errors[0]);
+    }
+
+    public function testPastWindowDoesNotUseASnapshotAfterItsEnd(): void
+    {
+        $snapshots = new SteamSnapshots(new StateStore(self::tempFile('state')));
+        $snapshots->record(new \DateTimeImmutable('2026-09-27T00:00:00Z'), ['1' => [100, 'Game']]);
+        $snapshots->record(new \DateTimeImmutable('2026-09-27T23:50:00Z'), ['1' => [120, 'Game']]);
+        $snapshots->record(new \DateTimeImmutable('2026-09-28T00:10:00Z'), ['1' => [900, 'Game']]);
+        $source = new SteamSource(self::fakeHttp(['GetPlayerAchievements' => ['playerstats' => ['achievements' => []]]], $log), 'key', 'id', $snapshots, static fn() => new \DateTimeImmutable('2026-09-29T00:00:00Z'));
+        $report = self::settle($source->collect(new Window(new \DateTimeImmutable('2026-09-27T00:00:00Z'), new \DateTimeImmutable('2026-09-28T00:00:00Z'))));
+        self::assertStringContainsString('20m', $report->highlights[0]);
+        self::assertStringContainsString('approximate snapshot difference', $report->errors[0]);
+        self::assertEmpty(array_filter($log, static fn($url) => str_contains($url, 'GetOwnedGames')));
     }
 
     public function testPrivateProfileBecomesAnError(): void

@@ -355,7 +355,14 @@ final class GitHubSource implements Source
                             $events[$i]['payload']['size'] = count($commits);
                         } else {
                             $existing = (array) ($events[$i]['payload'][$kind] ?? []);
-                            $events[$i]['payload'][$kind] = $existing + array_intersect_key($body, array_flip(['number', 'title', 'merged', 'state', 'pull_request']));
+                            $metadata = array_intersect_key($body, array_flip(['number', 'title', 'pull_request']));
+                            // A current PR response cannot retroactively establish an event's status.
+                            if ($kind === 'pull_request' && ($events[$i]['payload']['action'] ?? '') === 'closed'
+                                && !array_key_exists('merged', $existing) && isset($body['merged_at'])
+                                && new \DateTimeImmutable($body['merged_at']) == new \DateTimeImmutable($events[$i]['created_at'])) {
+                                $metadata['merged'] = true;
+                            }
+                            $events[$i]['payload'][$kind] = $existing + $metadata;
                         }
                     }
                 },
