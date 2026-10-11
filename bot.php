@@ -120,7 +120,7 @@ $sources[] = new DiscordSource(
 );
 
 $pipeline = new Pipeline($sources, $writer, $state, $logger, Env::int('NEWSLETTER_HISTORY', Services::HISTORY));
-$flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger, Services::sitePublisher($discord->getLoop(), $logger), Services::redditPublisher($discord->getLoop(), $logger), Env::string('NEWSLETTER_FOOTER') ?? Env::string('REDDIT_FOOTER') ?? '', Services::telegramPublisher($discord->getLoop(), $logger));
+$flow = new ApprovalFlow($discord, $state, $pipeline, $writer, new ReplyInterpreter($ollama), $ownerId, $channelId, $tz, $logger, Services::sitePublisher($discord->getLoop(), $logger), Services::redditPublisher($discord->getLoop(), $logger), Env::string('NEWSLETTER_FOOTER') ?? Env::string('REDDIT_FOOTER') ?? '', Services::telegramPublisher($discord->getLoop(), $logger), Services::collectiveDrafts($discord->getLoop(), $logger, $writer, $state));
 
 // --- wiring --------------------------------------------------------------------------
 

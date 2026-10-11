@@ -246,4 +246,23 @@ final class Services
     {
         return array_values(array_filter(array_map('trim', explode(',', Env::string($key) ?? ''))));
     }
+
+    /** Optional owner-invoked draft integration; never added to automatic publication. */
+    public static function collectiveDrafts(LoopInterface $loop, LoggerInterface $logger, Writer $writer, StateStore $state): ?OpenCollectiveDrafts
+    {
+        $slug = Env::string('OPENCOLLECTIVE_COLLECTIVE');
+        if ($slug === null) {
+            return null;
+        }
+        $token = Env::string('OPENCOLLECTIVE_PERSONAL_TOKEN');
+        if ($token === null) {
+            $logger->warning('Open Collective drafts need OPENCOLLECTIVE_PERSONAL_TOKEN with updates scope.');
+            return null;
+        }
+        return new OpenCollectiveDrafts(
+            $state,
+            new OpenCollectivePublisher(new JsonClient(null, 30.0, $loop), $slug, $token),
+            static fn(array $edition): PromiseInterface => $writer->supporterUpdate(Draft::fromArray($edition['draft']), (string) $edition['key']),
+        );
+    }
 }

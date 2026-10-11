@@ -24,6 +24,7 @@ use Discord\Parts\Interactions\Interaction;
 use Discord\Parts\User\User;
 use Discord\WebSockets\Event;
 use Newsletter\Draft;
+use Newsletter\OpenCollectiveDrafts;
 use Newsletter\Pipeline;
 use Newsletter\RedditPublisher;
 use Newsletter\ReplyInterpreter;
@@ -81,6 +82,7 @@ final class ApprovalFlow
         private readonly ?RedditPublisher $reddit = null,
         private readonly string $footer = '',
         private readonly ?TelegramPublisher $telegram = null,
+        private readonly ?OpenCollectiveDrafts $collective = null,
     ) {}
 
     public function register(): void
@@ -401,6 +403,26 @@ final class ApprovalFlow
                 }
                 break;
 
+            case 'collective':
+                if ($this->collective === null) {
+                    $message->reply('Open Collective drafts need OPENCOLLECTIVE_COLLECTIVE and OPENCOLLECTIVE_PERSONAL_TOKEN.');
+                    break;
+                }
+                $posted = array_values(array_filter(
+                    (array) $this->state->get('editions', []),
+                    static fn($e): bool => is_array($e) && ($e['status'] ?? null) === StateStore::STATUS_POSTED && ($argument === '' || $e['key'] === $argument),
+                ));
+                usort($posted, static fn($a, $b): int => strcmp((string) ($b['created_at'] ?? ''), (string) ($a['created_at'] ?? '')));
+                if ($posted === []) {
+                    $message->reply('No posted, owner-approved edition was found.');
+                    break;
+                }
+                $key = $posted[0]['key'];
+                $this->exclusive($key, fn(): PromiseInterface => $this->collective->create($key)->then(
+                    fn(array $draft): PromiseInterface => $this->dm("Open Collective draft: {$draft['url']}\nReview and edit it there, then choose whether to publish and notify supporters. The bot has not published or sent supporter emails."),
+                ), [StateStore::STATUS_POSTED])->then(null, fn(\Throwable $e) => $this->fail('collective draft', $e));
+                break;
+
             case 'publish':
                 // Re-publish a posted edition to the websites, e.g. after fixing a token.
                 $key = $argument;
@@ -432,6 +454,7 @@ final class ApprovalFlow
             default:
                 $message->reply(implode("\n", [
                     '**Newsletter bot**',
+                    '!collective [date]: prepare an unpublished DiscordPHP supporter update from a posted edition; review/publish it in Open Collective',
                     'Reply to a draft in plain words to request edits, or say `approve` / `skip`.',
                     '`!generate`: draft a newsletter for today so far',
                     '`!status`: list drafts waiting on you',
