@@ -14,3 +14,6 @@
 /reddit-token.php  export-ignore
 /AGENTS.md         export-ignore
 /bin/build         export-ignore
+
+# Match PHP CS Fixer on Windows as well as Linux.
+*.php text eol=lf
