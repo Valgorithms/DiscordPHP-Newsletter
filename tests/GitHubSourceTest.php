@@ -81,6 +81,20 @@ final class GitHubSourceTest extends TestCase
         $this->assertNotEmpty($report->highlights);
     }
 
+    public function testCurrentMergeStatusDoesNotRewriteEarlierCloseEvents(): void
+    {
+        $event = ['type' => 'PullRequestEvent', 'public' => true, 'created_at' => '2026-09-27T15:00:00Z', 'repo' => ['name' => 'example/repo'],
+            'payload' => ['action' => 'closed', 'number' => 12, 'pull_request' => ['number' => 12]]];
+        foreach (['2026-09-28T15:00:00Z' => 'closed', '2026-09-27T15:00:00Z' => 'merged'] as $mergedAt => $expected) {
+            $http = self::fakeHttp(['/pulls/12' => ['number' => 12, 'title' => 'Fix cache', 'merged' => true, 'state' => 'closed', 'merged_at' => $mergedAt]]);
+            $source = new GitHubSource($http, 'owner');
+            $enriched = self::settle($source->enrich($this->window(), [$event]));
+            $report = $source->report($this->window(), $enriched, []);
+            self::assertStringContainsString($expected . ' pull request', $report->highlights[0]);
+            self::assertSame($expected === 'merged' ? 1 : 0, $report->stats['pull_requests_merged'] ?? 0);
+        }
+    }
+
     public function testCollectFillsInWhatTrimmedEventPayloadsLeaveOut(): void
     {
         // The shapes the events feed serves now: no titles, no commit lists.

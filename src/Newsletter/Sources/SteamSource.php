@@ -95,19 +95,31 @@ final class SteamSource implements Source
     public function collect(Window $window): PromiseInterface
     {
         $now = ($this->clock)();
-        // A past window (a catch-up) ends at a stored snapshot; a current one ends now.
-        $endSnapshot = $window->end < $now->modify('-15 minutes')
-            ? $this->snapshots->atOrBefore($window->end->modify('+15 minutes'))
-            : null;
+        // Historical totals must come from a snapshot inside the requested window.
+        $historical = $window->end < $now->modify('-15 minutes');
+        $endSnapshot = $historical ? $this->snapshots->atOrBefore($window->end) : null;
+        if ($historical && ($endSnapshot === null || new \DateTimeImmutable($endSnapshot['at']) <= $window->start)) {
+            return resolve(SourceReport::failed('steam', 'Steam activity', 'No historical end snapshot exists inside this activity window; current lifetime totals cannot establish past playtime.'));
+        }
         $end = $endSnapshot ? resolve($endSnapshot['games']) : $this->snapshot();
 
-        return $end->then(function (array $endGames) use ($window): PromiseInterface {
+        return $end->then(function (array $endGames) use ($window, $endSnapshot, $now): PromiseInterface {
             $notes = [];
             $base = $this->snapshots->atOrBefore($window->start);
             if ($base === null && ($base = $this->snapshots->firstBetween($window->start, $window->end)) !== null) {
                 $notes[] = 'playtime only counted since ' . (new \DateTimeImmutable($base['at']))->setTimezone($window->end->getTimezone())->format('H:i') . ' (first snapshot)';
             }
 
+            if ($base !== null && new \DateTimeImmutable($base['at']) != $window->start) {
+                $notes[] = 'Playtime is an approximate snapshot difference; its baseline is ' . $base['at'] . ', not the exact window start.';
+            }
+            $endAt = $endSnapshot['at'] ?? $now->format(DATE_ATOM);
+            if (new \DateTimeImmutable($endAt) != $window->end) {
+                $notes[] = 'Playtime is an approximate snapshot difference; its endpoint is ' . $endAt . ', not the exact window end.';
+            }
+            if ($base !== null && array_diff_key($endGames, $base['games']) !== []) {
+                $notes[] = 'Games without a per-game baseline are excluded from period playtime; lifetime totals are not new activity.';
+            }
             $played = $base ? self::deltas($base['games'], $endGames) : [];
             if ($base === null) {
                 $notes[] = 'no earlier playtime snapshot yet; daily playtime starts being tracked from today';
@@ -130,7 +142,10 @@ final class SteamSource implements Source
     {
         $played = [];
         foreach ($after as $appid => [$minutes, $name]) {
-            $delta = $minutes - (int) ($before[$appid][0] ?? 0);
+            if (!isset($before[$appid])) {
+                continue; // Missing is unknown, not zero lifetime playtime.
+            }
+            $delta = $minutes - (int) $before[$appid][0];
             if ($delta > 0) {
                 $played[(string) $appid] = ['minutes' => $delta, 'name' => $name, 'lifetime' => $minutes];
             }
@@ -148,8 +163,10 @@ final class SteamSource implements Source
     public function report(array $played, array $unlocked, array $errors = []): SourceReport
     {
         $highlights = [];
+        $approximate = array_filter($errors, static fn(string $error): bool => str_contains($error, 'approximate snapshot difference')) !== [];
+        $qualifier = $approximate ? 'about ' : '';
         foreach ($played as $game) {
-            $highlights[] = "Played {$game['name']} for " . self::duration($game['minutes']) . ' (' . round($game['lifetime'] / 60) . 'h lifetime)';
+            $highlights[] = "Played {$game['name']} for {$qualifier}" . self::duration($game['minutes']) . ' (' . round($game['lifetime'] / 60) . 'h lifetime)';
         }
         array_push($highlights, ...$unlocked);
 
