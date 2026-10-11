@@ -67,10 +67,10 @@ final class SourceReport
             $lines[] = "- {$highlight}";
         }
         if (($more = count($this->highlights) - count($shown)) > 0) {
-            $lines[] = "- … and {$more} more similar items";
+            $lines[] = "- … and {$more} additional items omitted from this prompt";
         }
         if ($this->highlights === [] && ! $this->stats) {
-            $lines[] = '- (no activity)';
+            $lines[] = $this->errors === [] ? '- (no activity recorded)' : '- (activity data unavailable)';
         }
         foreach ($this->errors as $error) {
             $lines[] = "- NOTE: data may be incomplete ({$error})";

@@ -25,6 +25,9 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
     /** @var list<string> Prompts the fake LLM received, in order. */
     protected array $prompts = [];
 
+    /** @var list<list<array{role: string, content: string}>> */
+    protected array $llmMessages = [];
+
     /**
      * Settles a promise that the fakes resolve synchronously.
      */
@@ -59,6 +62,7 @@ abstract class TestCase extends \PHPUnit\Framework\TestCase
         return new OllamaClient('http://ollama:11434', 'test-model', function (string $method, string $url, array $headers, string $body) use (&$replies): PromiseInterface {
             $sent = json_decode($body, true);
             $this->prompts[] = (string) end($sent['messages'])['content'];
+            $this->llmMessages[] = $sent['messages'];
             $reply = array_shift($replies) ?? new \RuntimeException('No more fake replies');
             if ($reply instanceof \Throwable) {
                 return reject($reply);

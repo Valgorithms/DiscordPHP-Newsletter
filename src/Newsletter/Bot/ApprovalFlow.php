@@ -177,7 +177,9 @@ final class ApprovalFlow
             $this->state->putEdition($edition);
             $this->dm("✏️ Revising the {$edition['key']} draft with your notes… (the local model can take a minute)");
 
-            return $this->writer->revise(Draft::fromArray($edition['draft']), $instructions, (array) $edition['notes'], $this->pipeline->previous($edition['key']))
+            $reports = array_map(static fn(array $r) => SourceReport::fromArray($r), (array) ($edition['reports'] ?? []));
+
+            return $this->writer->revise(Draft::fromArray($edition['draft']), $instructions, (array) $edition['notes'], $this->pipeline->previous($edition['key']), $reports)
                 ->then(function (Draft $draft) use ($edition): PromiseInterface {
                     $edition['draft'] = $draft->toArray();
                     $edition['revision']++;
