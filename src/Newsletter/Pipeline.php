@@ -20,6 +20,7 @@ use Psr\Log\NullLogger;
 use React\Promise\PromiseInterface;
 
 use function React\Promise\all;
+use function React\Promise\reject;
 
 /**
  * Collect → write → store: turns a {@see Window} into a stored edition that is
@@ -87,6 +88,11 @@ final class Pipeline
      */
     public function run(Window $window, bool $manual = false): PromiseInterface
     {
+        try {
+            $window = $this->state->unpublishedWindow($window);
+        } catch (\RuntimeException $error) {
+            return reject($error);
+        }
         $this->logger->info("Building the newsletter for {$window->range()}");
 
         return $this->collect($window)

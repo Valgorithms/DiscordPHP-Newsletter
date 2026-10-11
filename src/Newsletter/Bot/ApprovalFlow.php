@@ -129,6 +129,10 @@ final class ApprovalFlow
     public function approve(string $key): PromiseInterface
     {
         return $this->exclusive($key, function (array $edition): PromiseInterface {
+            $cutoff = $this->state->publishedWindowEnd();
+            if ($cutoff !== null && $this->window($edition)->start < $cutoff) {
+                return reject(new \RuntimeException('This draft overlaps activity already posted in another edition. Generate a fresh draft before approving it.'));
+            }
             $channel = $this->discord->getChannel($this->channelId);
             if ($channel === null) {
                 return reject(new \RuntimeException("Newsletter channel {$this->channelId} is not visible to the bot."));
@@ -387,7 +391,7 @@ final class ApprovalFlow
             case 'preview':
                 $now = new \DateTimeImmutable('now', $this->tz);
                 $message->reply('🛠️ Collecting today\'s activity and drafting with the local model…');
-                // A manual run covers today so far and leaves the scheduled window alone.
+                // The pipeline removes published activity without changing the schedule.
                 $this->generate(Window::since(null, $now), true)
                     ->then(null, fn(\Throwable $e) => $this->fail('generate', $e));
                 break;

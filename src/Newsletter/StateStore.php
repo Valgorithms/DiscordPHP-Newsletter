@@ -166,6 +166,11 @@ final class StateStore
         $published[] = self::publishedEntry($edition);
         usort($published, self::newestFirst(...));
         $this->set('published', array_slice($published, 0, self::PUBLISHED_KEPT));
+        if (isset($edition['window']['end'])) {
+            $end = new \DateTimeImmutable($edition['window']['end']);
+            $last = $this->publishedWindowEnd();
+            $this->set('published_window_end', ($last !== null && $last > $end ? $last : $end)->format(DATE_ATOM));
+        }
     }
 
     /**
@@ -231,6 +236,37 @@ final class StateStore
     }
 
     // --- window ----------------------------------------------------------------
+
+    /** Latest activity cutoff actually posted, independent of scheduled draft claims. */
+    public function publishedWindowEnd(): ?\DateTimeImmutable
+    {
+        $saved = $this->get('published_window_end');
+        $latest = is_string($saved) ? new \DateTimeImmutable($saved) : null;
+        // Existing installations have posted editions but no separate cutoff yet.
+        foreach ((array) $this->get('editions', []) as $edition) {
+            if (!is_array($edition) || ($edition['status'] ?? null) !== self::STATUS_POSTED || !isset($edition['window']['end'])) {
+                continue;
+            }
+            $end = new \DateTimeImmutable($edition['window']['end']);
+            if ($latest === null || $end > $latest) {
+                $latest = $end;
+            }
+        }
+        return $latest;
+    }
+
+    /** Trim already-published activity; never fall back to midnight for an empty interval. */
+    public function unpublishedWindow(Window $window): Window
+    {
+        $cutoff = $this->publishedWindowEnd();
+        if ($cutoff === null || $cutoff <= $window->start) {
+            return $window;
+        }
+        if ($cutoff >= $window->end) {
+            throw new \RuntimeException('This activity window has already been published. Wait for new activity before generating another edition.');
+        }
+        return new Window($cutoff->setTimezone($window->start->getTimezone()), $window->end);
+    }
 
     public function lastWindowEnd(): ?\DateTimeImmutable
     {
