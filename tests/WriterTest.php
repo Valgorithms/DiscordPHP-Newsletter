@@ -116,7 +116,7 @@ final class WriterTest extends TestCase
         }
         $this->assertStringContainsString('Do not reuse their headlines', $this->prompts[1]);
         $this->assertStringContainsString('Do not announce again', $this->prompts[1]);
-        $this->assertStringContainsString('must not be presented as today', $this->prompts[2]);
+        $this->assertStringContainsString('must not be presented as today', (string) preg_replace('/\s+/', ' ', $this->prompts[2]));
 
         $this->prompts = [];
         self::settle((new Writer($this->fakeLlm(['notes', self::DRAFT]), 'Valithor', factCheck: false))->write($this->window(), $this->reports()));
@@ -163,5 +163,91 @@ final class WriterTest extends TestCase
 
         $this->assertSame('LLM server error: model requires more system memory', $fellBack['fallback']);
         $this->assertStringStartsWith("Valithor's daily recap", $fellBack['draft']->headline);
+    }
+
+    public function testFactCheckerUsesOriginalReportsInsteadOfInventedModelNotes(): void
+    {
+        $invented = 'Released version 99.0 with complete coverage of every API.';
+        $writer = new Writer($this->fakeLlm([$invented, self::DRAFT, self::DRAFT]), 'Valithor');
+
+        self::settle($writer->write($this->window(), $this->reports()));
+
+        $this->assertStringContainsString($invented, $this->prompts[1], 'composition uses the derived notes');
+        $this->assertStringContainsString('merged pull request #1400 "Add polls"', $this->prompts[2]);
+        $this->assertStringNotContainsString($invented, $this->prompts[2], 'the checker must not accept notes as evidence');
+        $this->assertStringContainsString('Original source evidence', $this->prompts[2]);
+    }
+
+    public function testFailedEmptySourcesDoNotBecomeAQuietDay(): void
+    {
+        $writer = new Writer($this->fakeLlm([]), 'Valithor');
+        $reports = [SourceReport::failed('github', 'GitHub', 'connection refused'), new SourceReport('steam', 'Steam')];
+
+        $written = self::settle($writer->write($this->window(), $reports));
+
+        $this->assertSame([], $this->prompts, 'no model should invent activity when evidence is unavailable');
+        $this->assertStringContainsString('incomplete', $written['draft']->headline);
+        $this->assertStringContainsString('could not be read', $written['draft']->intro);
+        $this->assertStringNotContainsString('quiet day', $written['draft']->intro);
+        $this->assertStringNotContainsString('connection refused', $written['draft']->toMarkdown());
+        $this->assertNull($written['fallback'], 'source failure is distinct from model failure');
+        $this->assertStringContainsString('incomplete', Writer::fallback($this->window(), $reports, [], 'Valithor')->headline);
+    }
+
+    public function testPartialSourceFailuresReachCompositionAndReview(): void
+    {
+        $reports = [$this->reports()[0], SourceReport::failed('steam', 'Steam', 'private transport diagnostic')];
+        $writer = new Writer($this->fakeLlm(['Merged polls', self::DRAFT, self::DRAFT]), 'Valithor');
+
+        self::settle($writer->write($this->window(), $reports));
+
+        $this->assertCount(3, $this->prompts, 'failed source has no notes call');
+        $this->assertStringContainsString('Data coverage: steam reported incomplete data', $this->prompts[1]);
+        $this->assertStringContainsString($this->window()->range(), $this->prompts[1]);
+        $this->assertStringNotContainsString('private transport diagnostic', $this->prompts[1]);
+        $this->assertStringContainsString('activity data unavailable', $this->prompts[2]);
+        $fallback = Writer::fallback($this->window(), $reports, [], 'Valithor');
+        $this->assertStringContainsString('Some sources could not be read', $fallback->intro);
+        $this->assertStringNotContainsString('private transport diagnostic', $fallback->toMarkdown());
+    }
+
+    public function testRevisionUsesOriginalReportsAndRetainsOwnerInstructions(): void
+    {
+        $writer = new Writer($this->fakeLlm([self::DRAFT]), 'Valithor');
+
+        self::settle($writer->revise(Draft::fromLlmJson(self::DRAFT), 'Add that I am on vacation.', ['github' => 'Invented version 99.0 release'], [], $this->reports()));
+
+        $this->assertStringContainsString('merged pull request #1400 "Add polls"', $this->prompts[0]);
+        $this->assertStringNotContainsString('Invented version 99.0 release', $this->prompts[0]);
+        $this->assertStringContainsString('Add that I am on vacation.', $this->prompts[0]);
+        $this->assertStringContainsString('use their wording', $this->prompts[0], 'owner-supplied facts remain trusted');
+    }
+
+    public function testLegacyReviewAndRevisionKeepSavedNotes(): void
+    {
+        $writer = new Writer($this->fakeLlm([self::DRAFT, self::DRAFT]), 'Valithor');
+        $draft = Draft::fromLlmJson(self::DRAFT);
+        self::settle($writer->review($draft, ['github' => 'Saved original notes']));
+        self::settle($writer->revise($draft, 'Shorter', ['github' => 'Saved original notes']));
+
+        foreach ($this->prompts as $prompt) {
+            $this->assertStringContainsString('Original reports unavailable', $prompt);
+            $this->assertStringContainsString('Saved original notes', $prompt);
+        }
+    }
+
+    public function testEditorialGuidanceDistinguishesNewProgressAndActualOutcomes(): void
+    {
+        $previous = [['date' => 'Yesterday', 'markdown' => "# Introducing Frontier Systems\nI introduced the cooperative engineering project."]];
+        $writer = new Writer($this->fakeLlm([self::DRAFT]), 'Valithor');
+        self::settle($writer->compose($this->window(), $this->reports(), ['github' => 'An inventory fix is open for review.'], $previous));
+        $system = $this->llmMessages[0][0]['content'];
+
+        $this->assertStringContainsString('Lead with a concrete result', $system);
+        $this->assertStringContainsString('Merge duplicate coverage', $system);
+        $this->assertStringContainsString('merged code is not proof of deployment', $system);
+        $this->assertStringContainsString('Never pad the draft', $system);
+        $this->assertStringContainsString('Describe open work as intended behavior', $system);
+        $this->assertStringContainsString('A previously introduced project is not a new announcement', $this->prompts[0]);
     }
 }

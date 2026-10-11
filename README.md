@@ -36,7 +36,8 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
 - **Plain-English prose, not a changelog.** The model first turns each source's raw activity into themes ("reviewed
   community PRs on command handling"), then writes a few paragraphs about what the day's work was about and why it
   mattered. It names at most a couple of highlights, never every PR or commit. It writes Markdown rather than JSON,
-  which local models handle far more reliably.
+  which local models handle far more reliably. It leads with a concrete result, combines duplicate coverage, avoids
+  generic busy-day openings and hype, and writes less when there is little new information.
 - **Only your work, never its own.** The commits that publish an edition to the websites, and anything said in the
   newsletter channel, are not reported as your work. From the bot's own repository (`NEWSLETTER_REPO`) only commits
   that change what it does are reported: a commit whose message is not routine (docs, formatting, tests, merges) and
@@ -44,6 +45,14 @@ native `/api/chat` for a bare origin, OpenAI-compatible `/v1/chat/completions` f
 - **It remembers what it already said.** Before writing, the model reads the last few published editions
   (`NEWSLETTER_HISTORY`, 5 by default). It avoids their headlines and phrasing, does not announce the same update
   twice, and presents more work on something already reported as progress on it.
+- **Checks the original evidence.** The final review and owner-requested revisions use the saved source reports,
+  not just the model's summaries. Opening, merging, releasing, deploying and verifying are kept distinct.
+  Older editions without reports still use their saved notes. The original 80-highlight prompt cap is retained;
+  omitted items and source failures are marked as incomplete evidence.
+- **Missing data is not a quiet day.** When sources fail without recording activity, the deterministic draft says
+  the summary is incomplete. A quiet-day draft means nothing was recorded in the available logs, not that no work
+  happened. Partial source failures also reach the composition and review prompts without becoming a story about
+  API error diagnostics.
 - **If Ollama is down**, you still get the raw activity list so a day is never lost. The DM says the model didn't
   write it and why, and `!rewrite` asks the model again once it's back. `bot.php` and `preview.php` check at startup
   that Ollama answers and has your model, and say exactly what to fix if not.
@@ -170,3 +179,14 @@ on a release, a manual run, or a push whose commit message contains "build docs"
 
 `composer unit` runs the tests without network, Discord or Ollama. Every HTTP and LLM call goes through an injectable
 transport.
+
+
+### Local writing evaluation
+
+    php scripts/evaluate-writer.php --url=http://localhost:11434 --model=your-local-model --output=sample.json
+
+Run this to exercise notes, composition and factual review sequentially against a local model. The runner uses
+synthetic activity and a previous-edition fixture, reads no .env or bot state, and creates no publication clients.
+Its output includes a checklist for manually assessing accuracy, new progress, duplicate coverage and tone.
+This is an opt-in generation test, separate from composer unit; it does not establish that every future
+model reply will follow the prompts. Loopback/private IPv4 endpoints are required.
