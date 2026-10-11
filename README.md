@@ -235,7 +235,8 @@ missing historical endpoint. Snapshot times can differ from the requested window
 marked approximate/incomplete rather than asserted as exact daily totals. GitHub title enrichment
 preserves event-time status; a later merge cannot turn an earlier close into a merge event.
 
-The owner still reviews every draft. The local LLM fact-check is best effort: if it fails, the draft
-is retained and the failure is logged. GitHub feeds/search and Discord gateway observations are
+The owner still reviews every draft. If the enabled local LLM fact-check fails, the generated prose is replaced with a
+source-based activity list and the approval message explains that the factual review failed.
+Supporter-update creation stops when its factual review fails; retry after the model is available. GitHub feeds/search and Discord gateway observations are
 bounded sources, not a complete audit of all work. This does not establish inactivity outside the
 recorded evidence. No new environment settings are required for these measurement rules.

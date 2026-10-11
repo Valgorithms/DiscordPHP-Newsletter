@@ -99,13 +99,20 @@ final class Writer
             ->then(function () use ($window, $reports, &$notes, $previous): PromiseInterface {
                 return $this->compose($window, $reports, $notes, $previous);
             })
-            ->then(function (array $composed) use (&$notes, $previous, $reports): PromiseInterface {
+            ->then(function (array $composed) use (&$notes, $previous, $reports, $window): PromiseInterface {
                 if ($composed['fallback'] !== null || ! $this->factCheck || $notes === []) {
                     return resolve($composed);
                 }
 
                 return $this->review($composed['draft'], $notes, $previous, $reports)
-                    ->then(static fn(Draft $draft): array => ['draft' => $draft, 'fallback' => null]);
+                    ->then(
+                        static fn(Draft $draft): array => ['draft' => $draft, 'fallback' => null],
+                        function (\Throwable $error) use ($window, $reports, &$notes): array {
+                            $this->logger->warning('Fact-check failed; using the source-based fallback: ' . $error->getMessage());
+                            return ['draft' => self::fallback($window, $reports, $notes, $this->author),
+                                'fallback' => 'The factual review could not be completed. This draft uses the recorded source facts instead.'];
+                        },
+                    );
             })
             ->then(function (array $composed) use (&$notes): array {
                 return ['draft' => $composed['draft'], 'notes' => $notes, 'fallback' => $composed['fallback']];
@@ -203,7 +210,7 @@ final class Writer
     /**
      * Fact-checks $draft against original reports (saved notes for legacy editions)
      * and returns a corrected draft. Any
-     * failure keeps the original: a missed check is better than a lost draft.
+     * failure rejects; callers must explicitly choose a source-based fallback or retry.
      *
      * @param array<string, string>      $notes
      * @param list<array<string, mixed>> $previous Published editions, newest first.
@@ -239,11 +246,7 @@ final class Writer
                 author's voice; do not pad the corrected draft to its original length or publish raw error diagnostics.
                 Reply with ONLY the corrected newsletter, in exactly the same Markdown format.
                 PROMPT],
-        ], 0.1, false)->then(null, function (\Throwable $e) use ($draft): Draft {
-            $this->logger->warning("Fact-check pass failed, keeping the draft: {$e->getMessage()}");
-
-            return $draft;
-        });
+        ], 0.1, false);
     }
 
     /**
